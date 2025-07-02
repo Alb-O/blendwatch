@@ -17,7 +17,7 @@ import tomli
 from colorama import init, Fore, Style
 
 from .watcher import FileWatcher
-from .config import Config, load_config
+from .config import Config, load_config, load_default_config
 
 # Initialize colorama for cross-platform colored output
 init()
@@ -48,17 +48,30 @@ def watch(path: str, extensions: tuple, ignore_dirs: tuple, config: Optional[str
           output: Optional[str], verbose: bool, recursive: bool):
     """Start watching a directory for file/directory renames and moves."""
     
-    # Load configuration if provided
+    # Load configuration - check for default config if none provided
     config_obj = None
-    if config:
-        config_obj = load_config(config)
+    config_file = config
+    
+    if not config_file:
+        # Look for default config file in current directory
+        default_config = Path("blendwatch.config.toml")
+        if default_config.exists():
+            config_file = str(default_config)
+            if verbose:
+                click.echo(f"{Fore.CYAN}Using default config: {config_file}{Style.RESET_ALL}")
+    
+    if config_file:
+        config_obj = load_config(config_file)
         if not config_obj:
-            click.echo(f"{Fore.RED}Error: Could not load config file: {config}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: Could not load config file: {config_file}{Style.RESET_ALL}")
             sys.exit(1)
     
     # Merge CLI options with config
     watch_extensions = list(extensions) if extensions else []
     ignore_patterns = list(ignore_dirs) if ignore_dirs else []
+    
+    # Load default config for fallback values
+    default_config = load_default_config()
     
     if config_obj:
         if not watch_extensions:
@@ -66,13 +79,12 @@ def watch(path: str, extensions: tuple, ignore_dirs: tuple, config: Optional[str
         if not ignore_patterns:
             ignore_patterns = config_obj.ignore_dirs
     
-    # Default extensions if none provided
+    # Use default config as fallback if no config file and no CLI options
     if not watch_extensions:
-        watch_extensions = ['.blend', '.py', '.txt', '.json', '.toml', '.yaml', '.yml']
+        watch_extensions = default_config.extensions
     
-    # Default ignore patterns if none provided
     if not ignore_patterns:
-        ignore_patterns = [r'\.git', r'__pycache__', r'\.venv', r'node_modules', r'\.DS_Store']
+        ignore_patterns = default_config.ignore_dirs
     
     click.echo(f"{Fore.GREEN}Starting BlendWatch...{Style.RESET_ALL}")
     click.echo(f"{Fore.CYAN}Watching: {path}{Style.RESET_ALL}")
@@ -108,63 +120,30 @@ def watch(path: str, extensions: tuple, ignore_dirs: tuple, config: Optional[str
 
 
 @main.command()
-@click.argument('config_path', type=click.Path())
+@click.argument('config_path', type=click.Path(), default='blendwatch.config.toml')
 def init_config(config_path: str):
-    """Create a sample configuration file."""
-    
-    # Generate TOML content as string
-    toml_content = '''# BlendWatch Configuration
-
-# File extensions to watch (include the dot)
-extensions = [
-    ".blend",
-    ".py", 
-    ".txt",
-    ".json",
-    ".toml",
-    ".yaml",
-    ".yml"
-]
-
-# Directory patterns to ignore (regex patterns)
-ignore_dirs = [
-    "\\\\.git",          # Git directories
-    "__pycache__",     # Python cache
-    "\\\\.venv",         # Virtual environments
-    "node_modules",    # Node.js modules
-    "\\\\.DS_Store",     # macOS system files
-    "\\\\.tmp"           # Temporary directories
-]
-
-# Output format: 'json' or 'text'
-output_format = "json"
-
-# Log level: 'debug', 'info', 'warning', 'error'
-log_level = "info"
-'''
+    """Create a configuration file. Defaults to 'blendwatch.config.toml' if no path specified."""
     
     try:
-        with open(config_path, 'w') as f:
-            if config_path.endswith('.json'):
-                sample_config = {
-                    'extensions': ['.blend', '.py', '.txt', '.json', '.toml', '.yaml', '.yml'],
-                    'ignore_dirs': [
-                        r'\.git',
-                        r'__pycache__',
-                        r'\.venv',
-                        r'node_modules',
-                        r'\.DS_Store',
-                        r'\.tmp'
-                    ],
-                    'output_format': 'json',
-                    'log_level': 'info'
-                }
-                json.dump(sample_config, f, indent=2)
-            else:
-                # Default to TOML
-                f.write(toml_content)
+        # Get the path to the default config file in the package
+        default_config_path = Path(__file__).parent / 'default.config.toml'
         
-        click.echo(f"{Fore.GREEN}Sample configuration created: {config_path}{Style.RESET_ALL}")
+        if config_path.endswith('.json'):
+            # Convert TOML to JSON for JSON output
+            with open(default_config_path, 'rb') as f:
+                config_data = tomli.load(f)
+            
+            with open(config_path, 'w') as f:
+                json.dump(config_data, f, indent=2)
+        else:
+            # Copy the TOML file directly
+            with open(default_config_path, 'r') as source:
+                toml_content = source.read()
+            
+            with open(config_path, 'w') as dest:
+                dest.write(toml_content)
+        
+        click.echo(f"{Fore.GREEN}Configuration file created: {config_path}{Style.RESET_ALL}")
         click.echo(f"{Fore.CYAN}Edit this file to customize your watching preferences.{Style.RESET_ALL}")
         
     except Exception as e:

@@ -9,7 +9,7 @@ dependencies = [
     "watchdog>=4.0.0",
     "click>=8.1.0",
     "colorama>=0.4.6",
-    "tomli>=2.0.0"
+    "tomli>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -17,14 +17,18 @@ test = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
-    "pytest-asyncio>=0.21.0"
+    "pytest-asyncio>=0.21.0",
 ]
 
 [project.scripts]
 blendwatch = "blendwatch.cli:main"
 
+[tool.setuptools.package-data]
+blendwatch = ["*.toml"]
+
 [tool.poetry]
 packages = [{ include = "blendwatch", from = "src" }]
+include = ["src/blendwatch/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -37,7 +41,7 @@ addopts = [
     "--cov=src/blendwatch",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
-    "--cov-fail-under=80"
+    "--cov-fail-under=80",
 ]
 
 [tool.coverage.run]

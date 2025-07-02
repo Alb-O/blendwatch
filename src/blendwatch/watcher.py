@@ -78,8 +78,12 @@ class MoveTrackingHandler(FileSystemEventHandler):
     
     def on_moved(self, event):
         """Handle file/directory move events"""
+        # Convert paths to strings to handle bytes/str type issues
+        src_path = str(event.src_path)
+        dest_path = str(event.dest_path)
+        
         # Skip if path should be ignored
-        if self.should_ignore_path(event.src_path) or self.should_ignore_path(event.dest_path):
+        if self.should_ignore_path(src_path) or self.should_ignore_path(dest_path):
             return
         
         # Determine event type
@@ -87,15 +91,15 @@ class MoveTrackingHandler(FileSystemEventHandler):
             event_type = 'directory_moved'
         elif isinstance(event, FileMovedEvent):
             # Check if file should be tracked
-            if not self.should_track_file(event.src_path) and not self.should_track_file(event.dest_path):
+            if not self.should_track_file(src_path) and not self.should_track_file(dest_path):
                 return
             event_type = 'file_moved'
         else:
             return
         
         # Check if it's a rename (same parent directory) or move
-        src_parent = Path(event.src_path).parent
-        dest_parent = Path(event.dest_path).parent
+        src_parent = Path(src_path).parent
+        dest_parent = Path(dest_path).parent
         
         if src_parent == dest_parent:
             event_type = event_type.replace('moved', 'renamed')
@@ -104,10 +108,10 @@ class MoveTrackingHandler(FileSystemEventHandler):
         event_data = {
             'timestamp': datetime.now().isoformat(),
             'type': event_type,
-            'old_path': event.src_path,
-            'new_path': event.dest_path,
-            'old_name': Path(event.src_path).name,
-            'new_name': Path(event.dest_path).name,
+            'old_path': src_path,
+            'new_path': dest_path,
+            'old_name': Path(src_path).name,
+            'new_name': Path(dest_path).name,
             'is_directory': isinstance(event, DirMovedEvent)
         }
         

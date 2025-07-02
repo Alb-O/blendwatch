@@ -7,7 +7,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-from blendwatch.config import Config, load_config
+from blendwatch.config import Config, load_config, load_default_config, load_default_config
 
 
 class TestConfig:
@@ -142,3 +142,25 @@ ignore_dirs = ["test_dir"]
             assert config is not None
             assert config.extensions == ['.test']
             assert config.ignore_dirs == ['test_dir']
+
+
+class TestLoadDefaultConfig:
+    """Test loading the default configuration"""
+    
+    def test_load_default_config(self):
+        """Test loading the default configuration from package"""
+        config = load_default_config()
+        
+        assert isinstance(config, Config)
+        assert len(config.extensions) > 0
+        assert len(config.ignore_dirs) > 0
+        assert config.output_format in ['json', 'text']
+        assert config.log_level in ['debug', 'info', 'warning', 'error']
+        assert config.buffer_size > 0
+        assert config.debounce_delay >= 0
+        
+        # Verify specific expected values from default config
+        assert '.blend' in config.extensions
+        assert '.py' in config.extensions
+        assert r'\.git' in config.ignore_dirs or '\\.git' in config.ignore_dirs
+        assert '__pycache__' in config.ignore_dirs

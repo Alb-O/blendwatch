@@ -6,7 +6,7 @@ A CLI file watcher program specifically designed for tracking and determining fi
 
 - 🔍 **Intelligent File Tracking**: Detects file and directory renames/moves using filesystem events
 - 🎯 **Extension Filtering**: Monitor only the file types you care about (e.g., .blend, .py, .jpg)
-- 🚫 **Directory Exclusion**: Ignore directories using regex patterns (.git, __pycache__, node_modules, etc.)
+- 🚫 **Directory Exclusion**: Ignore directories using regex patterns (.git, **pycache**, node_modules, etc.)
 - ⚙️ **TOML Configuration**: Easy-to-read configuration files
 - 📊 **Multiple Output Formats**: JSON and human-readable text output
 - 🎨 **Colored Output**: Beautiful terminal output with colors
@@ -23,11 +23,13 @@ poetry install
 ## Quick Start
 
 1. **Initialize a configuration file:**
+
    ```bash
    poetry run blendwatch init-config config.toml
    ```
 
 2. **Start watching a directory:**
+
    ```bash
    poetry run blendwatch watch /path/to/watch --config config.toml
    ```
@@ -102,6 +104,7 @@ log_level = "info"
 ### Examples
 
 **Watch Blender project files:**
+
 ```bash
 poetry run blendwatch watch ~/BlenderProjects \
   --extensions .blend --extensions .py --extensions .fbx \
@@ -109,11 +112,13 @@ poetry run blendwatch watch ~/BlenderProjects \
 ```
 
 **Watch with configuration file:**
+
 ```bash
 poetry run blendwatch watch ~/Projects --config project.toml --output changes.log
 ```
 
 **Generate reports:**
+
 ```bash
 poetry run blendwatch report changes.log --format table --filter-type moved
 ```
@@ -121,17 +126,19 @@ poetry run blendwatch report changes.log --format table --filter-type moved
 ## Output Format
 
 ### JSON Output
+
 ```json
 {
-  "timestamp": "2025-07-02T10:30:45.123456",
-  "event_type": "moved",
-  "src_path": "/old/path/file.blend",
-  "dest_path": "/new/path/file.blend",
-  "is_directory": false
+	"timestamp": "2025-07-02T10:30:45.123456",
+	"event_type": "moved",
+	"src_path": "/old/path/file.blend",
+	"dest_path": "/new/path/file.blend",
+	"is_directory": false
 }
 ```
 
 ### Text Output
+
 ```
 [2025-07-02 10:30:45] MOVED: /old/path/file.blend -> /new/path/file.blend
 ```

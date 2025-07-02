@@ -40,15 +40,15 @@ class TestCLI:
         """Test init-config command help"""
         result = self.runner.invoke(main, ['init-config', '--help'])
         assert result.exit_code == 0
-        assert 'Create a sample configuration file' in result.output
-    
+        assert 'Create a configuration file' in result.output
+
     def test_init_config_toml(self):
         """Test creating TOML configuration file"""
         with tempfile.NamedTemporaryFile(suffix='.toml', delete=False) as f:
             result = self.runner.invoke(main, ['init-config', f.name])
-            
+
             assert result.exit_code == 0
-            assert 'Sample configuration created' in result.output
+            assert 'Configuration file created' in result.output
             
             # Check file contents
             with open(f.name, 'r') as config_file:
@@ -57,14 +57,14 @@ class TestCLI:
                 assert 'ignore_dirs =' in content
                 assert '".blend"' in content
                 assert '".py"' in content
-    
+
     def test_init_config_json(self):
         """Test creating JSON configuration file"""
         with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as f:
             result = self.runner.invoke(main, ['init-config', f.name])
-            
+
             assert result.exit_code == 0
-            assert 'Sample configuration created' in result.output
+            assert 'Configuration file created' in result.output
             
             # Check file contents
             with open(f.name, 'r') as config_file:
