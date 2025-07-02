@@ -148,7 +148,7 @@ class BacklinkScanner:
         """
         target_asset = Path(target_asset)
         if not target_asset.exists():
-            log.warning(f"Target asset does not exist: {target_asset}")
+            log.warning(f"Target asset (old path) does not exist: {target_asset} - this is expected if the file was moved/renamed")
         
         start_time = time.time()
         

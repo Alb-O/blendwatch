@@ -47,7 +47,12 @@ class LibraryPathWriter:
             for library in libraries:
                 try:
                     name = library[b"name"]
-                    filepath = library[b"filepath"]
+                    # Try filepath first, fall back to name if filepath doesn't exist
+                    try:
+                        filepath = library[b"filepath"]
+                    except KeyError:
+                        # In newer Blender versions, the library path might be stored in the name field
+                        filepath = library[b"name"]
                     
                     # Convert bytes to string if needed
                     if isinstance(name, bytes):
@@ -88,13 +93,29 @@ class LibraryPathWriter:
         
         updated_count = 0
         
+        # Create a more flexible mapping that includes filename-based matching
+        flexible_mapping = {}
+        for old_path, new_path in path_mapping.items():
+            # Add the original mapping
+            flexible_mapping[old_path] = new_path
+            
+            # Add filename-based mapping for cross-platform compatibility
+            old_filename = Path(old_path).name
+            flexible_mapping[old_filename] = new_path
+        
         with blendfile.BlendFile(self.blend_file_path, mode="r+b") as bf:
             # Get all library blocks (LI = Library)
             libraries = bf.code_index.get(b"LI", [])
             
             for library in libraries:
                 try:
-                    current_filepath = library[b"filepath"]
+                    # Try filepath first, fall back to name if filepath doesn't exist
+                    try:
+                        current_filepath = library[b"filepath"]
+                    except KeyError:
+                        # In newer Blender versions, the library path might be stored in the name field
+                        current_filepath = library[b"name"]
+                    
                     current_name = library[b"name"]
                     
                     # Convert bytes to string for comparison
@@ -103,15 +124,48 @@ class LibraryPathWriter:
                     else:
                         current_filepath_str = str(current_filepath).rstrip('\x00')
                     
-                    # Check if this library path should be updated
-                    new_path = path_mapping.get(current_filepath_str)
+                    # Check for matches using multiple strategies
+                    new_path = None
+                    
+                    # Strategy 1: Exact path match
+                    if current_filepath_str in path_mapping:
+                        new_path = path_mapping[current_filepath_str]
+                    
+                    # Strategy 2: Filename match (for cross-platform compatibility)
+                    if new_path is None:
+                        current_filename = Path(current_filepath_str).name
+                        if current_filename in flexible_mapping:
+                            new_path = flexible_mapping[current_filename]
+                    
+                    # Strategy 3: Relative path resolution
+                    if new_path is None and current_filepath_str.startswith('//'):
+                        # Resolve relative path to absolute
+                        relative_path = current_filepath_str[2:]  # Remove '//'
+                        blend_dir = self.blend_file_path.parent
+                        resolved_path = (blend_dir / relative_path).resolve()
+                        if str(resolved_path) in path_mapping:
+                            new_path = path_mapping[str(resolved_path)]
+                    
                     if new_path is not None:
                         # Convert new path to bytes with null termination
                         new_path_bytes = new_path.encode('utf-8') + b'\x00'
                         
-                        # Update both filepath and name fields
-                        library[b"filepath"] = new_path_bytes
-                        library[b"name"] = new_path_bytes
+                        # Update both fields - try filepath first, fallback to name only if filepath doesn't exist
+                        try:
+                            library[b"filepath"] = new_path_bytes
+                            # For the name field, keep the original library name/identifier if it was relative
+                            current_name = library[b"name"]
+                            if isinstance(current_name, bytes):
+                                current_name_str = current_name.decode('utf-8', errors='replace').rstrip('\x00')
+                            else:
+                                current_name_str = str(current_name).rstrip('\x00')
+                            
+                            # Only update name if it was an absolute path (not a relative reference like //file.blend)
+                            if not current_name_str.startswith('//'):
+                                library[b"name"] = new_path_bytes
+                        except KeyError:
+                            # If filepath doesn't exist, update name field (newer Blender versions)
+                            library[b"name"] = new_path_bytes
                         
                         updated_count += 1
                         log.info(f"Updated library path: {current_filepath_str} -> {new_path}")
