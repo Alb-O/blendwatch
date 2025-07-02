@@ -253,10 +253,11 @@ class TestLibraryPathWriter:
     def test_make_paths_relative(self, mock_update, mock_get_paths):
         """Test converting absolute paths to relative"""
         # Mock current library paths (mix of absolute and relative)
+        # Use paths that can actually be made relative to the base
         mock_get_paths.return_value = {
-            "lib1": "/absolute/path/lib1.blend",
+            "lib1": "/base/project/assets/lib1.blend",
             "lib2": "//already/relative.blend",
-            "lib3": "/absolute/path/lib3.blend"
+            "lib3": "/base/shared/lib3.blend"
         }
         mock_update.return_value = 2
         
@@ -272,10 +273,10 @@ class TestLibraryPathWriter:
         
         # Should only include absolute paths that can be made relative
         assert len(path_mapping) == 2
-        assert "/absolute/path/lib1.blend" in path_mapping
-        assert "/absolute/path/lib3.blend" in path_mapping
-        assert path_mapping["/absolute/path/lib1.blend"] == "//absolute/path/lib1.blend"
-        assert path_mapping["/absolute/path/lib3.blend"] == "//absolute/path/lib3.blend"
+        assert "/base/project/assets/lib1.blend" in path_mapping
+        assert "/base/shared/lib3.blend" in path_mapping
+        assert path_mapping["/base/project/assets/lib1.blend"] == "//project/assets/lib1.blend"
+        assert path_mapping["/base/shared/lib3.blend"] == "//shared/lib3.blend"
     
     @patch('blendwatch.library_writer.LibraryPathWriter.get_library_paths')
     @patch('blendwatch.library_writer.LibraryPathWriter.update_library_paths')
@@ -303,6 +304,28 @@ class TestLibraryPathWriter:
         assert len(path_mapping) == 2
         assert "//relative/lib1.blend" in path_mapping
         assert "//relative/lib3.blend" in path_mapping
+    
+    @patch('blendwatch.library_writer.LibraryPathWriter.get_library_paths')
+    @patch('blendwatch.library_writer.LibraryPathWriter.update_library_paths')
+    def test_make_paths_relative_unreachable_paths(self, mock_update, mock_get_paths):
+        """Test converting absolute paths to relative when paths cannot be made relative"""
+        # Mock current library paths with paths outside the base directory
+        mock_get_paths.return_value = {
+            "lib1": "/completely/different/path/lib1.blend",
+            "lib2": "//already/relative.blend",
+            "lib3": "/another/unrelated/path/lib3.blend"
+        }
+        mock_update.return_value = 0
+        
+        writer = LibraryPathWriter(self.test_blend_file)
+        writer.blend_file_path = Path("/base/project/main.blend")
+        
+        result = writer.make_paths_relative(Path("/base"))
+        
+        # Should return 0 since no paths could be made relative
+        assert result == 0
+        # update_library_paths should not be called if no paths can be converted
+        mock_update.assert_not_called()
 
 
 class TestConvenienceFunctions:

@@ -545,4 +545,4 @@ test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-mock"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.9"
-content-hash = "9b86103411243db35baa985ecff4c655a5394db0af4c0a5fd0973969866a6635"
+content-hash = "332703be57b044f34d32844639fa5dcee7dd301ec98ce013ebbe44776388fea8"
