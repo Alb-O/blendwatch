@@ -7,5 +7,13 @@ __description__ = "Track and updated linked assets in Blender on a large filesys
 
 from .watcher import FileWatcher
 from .config import Config, load_config
+from .library_writer import LibraryPathWriter, update_blend_file_paths, get_blend_file_libraries
 
-__all__ = ['FileWatcher', 'Config', 'load_config']
+__all__ = [
+    'FileWatcher', 
+    'Config', 
+    'load_config',
+    'LibraryPathWriter',
+    'update_blend_file_paths',
+    'get_blend_file_libraries'
+]
