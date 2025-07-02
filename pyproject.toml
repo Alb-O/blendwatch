@@ -5,7 +5,15 @@ description = "Track and updated linked assets in Blender on a large filesystem.
 authors = [{ name = "Albert O'Shea", email = "albertoshea2@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "watchdog>=4.0.0",
+    "click>=8.1.0",
+    "colorama>=0.4.6",
+    "tomli>=2.0.0"
+]
+
+[project.scripts]
+blendwatch = "blendwatch.cli:main"
 
 [tool.poetry]
 packages = [{ include = "blendwatch", from = "src" }]

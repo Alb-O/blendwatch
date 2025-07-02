@@ -1,0 +1,46 @@
+# BlendWatch Configuration
+
+# File extensions to watch (include the dot)
+extensions = [
+    ".blend",
+    ".py",
+    ".txt",
+    ".json",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".fbx",
+    ".obj",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".exr",
+    ".hdr"
+]
+
+# Directory patterns to ignore (regex patterns)
+ignore_dirs = [
+    "\\.git",          # Git directories
+    "__pycache__",     # Python cache
+    "\\.venv",         # Virtual environments
+    "node_modules",    # Node.js modules
+    "\\.DS_Store",     # macOS system files
+    "\\.tmp",          # Temporary directories
+    "\\.cache",        # Cache directories
+    "Thumbs\\.db",     # Windows thumbnails
+    "\\.pytest_cache", # Pytest cache
+    "build",           # Build directories
+    "dist"             # Distribution directories
+]
+
+# Output format: 'json' or 'text'
+output_format = "json"
+
+# Log level: 'debug', 'info', 'warning', 'error'
+log_level = "info"
+
+# Maximum number of events to buffer before writing
+buffer_size = 100
+
+# Debounce delay in seconds (to avoid duplicate events)
+debounce_delay = 0.1
