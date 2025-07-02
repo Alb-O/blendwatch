@@ -48,6 +48,7 @@ debounce_delay = 2.0
 ### Commands
 
 - `blendwatch watch PATH` - Monitor directory for file operations
+- `blendwatch backlinks TARGET_ASSET SEARCH_DIR` - Find blend files linking to target
 - `blendwatch init-config [FILE]` - Generate configuration file
 - `blendwatch report LOG_FILE` - Analyze recorded events
 
@@ -72,6 +73,12 @@ Use custom configuration:
 
 ```bash
 poetry run blendwatch watch ~/data --config custom.toml --output events.log
+```
+
+Find backlinks to a blend file:
+
+```bash
+poetry run blendwatch backlinks assets/character.blend ~/projects
 ```
 
 ## Output Format

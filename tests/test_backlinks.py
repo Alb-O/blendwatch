@@ -12,6 +12,7 @@ from blendwatch.backlinks import (
     BacklinkResult,
     find_backlinks
 )
+from blendwatch.config import Config
 
 
 class TestBacklinkScanner:
@@ -105,6 +106,73 @@ class TestBacklinkScanner:
         # The file should not link to itself
         linking_files = [result.blend_file for result in backlinks]
         assert linked_cube not in linking_files
+    
+    def test_ignore_directories(self):
+        """Test that directories matching ignore patterns are skipped"""
+        # Create a test directory structure
+        test_dir = self.temp_dir / "test_project"
+        test_dir.mkdir()
+        
+        # Create a normal directory with a blend file
+        normal_dir = test_dir / "assets"
+        normal_dir.mkdir()
+        normal_blend = normal_dir / "normal.blend"
+        normal_blend.write_bytes(b"fake blend content")
+        
+        # Create an ignored directory with a blend file
+        ignored_dir = test_dir / "__pycache__"
+        ignored_dir.mkdir()
+        ignored_blend = ignored_dir / "cached.blend"
+        ignored_blend.write_bytes(b"fake blend content")
+        
+        # Create another ignored directory (.git)
+        git_dir = test_dir / ".git"
+        git_dir.mkdir()
+        git_blend = git_dir / "git.blend"
+        git_blend.write_bytes(b"fake blend content")
+        
+        # Create custom config with ignore patterns
+        config = Config(
+            extensions=['.blend'],
+            ignore_dirs=[r'__pycache__', r'\.git'],
+            output_format='json',
+            log_level='info',
+            buffer_size=100,
+            debounce_delay=0.1
+        )
+        
+        scanner = BacklinkScanner(test_dir, config=config)
+        blend_files = scanner.find_blend_files()
+        
+        # Should only find the normal blend file, not the ignored ones
+        blend_names = [f.name for f in blend_files]
+        assert "normal.blend" in blend_names
+        assert "cached.blend" not in blend_names
+        assert "git.blend" not in blend_names
+
+    def test_should_ignore_directory(self):
+        """Test the _should_ignore_directory method"""
+        config = Config(
+            extensions=['.blend'],
+            ignore_dirs=[r'__pycache__', r'\.git', r'node_modules', r'\.venv'],
+            output_format='json',
+            log_level='info',
+            buffer_size=100,
+            debounce_delay=0.1
+        )
+        
+        scanner = BacklinkScanner(self.blendfiles_dir, config=config)
+        
+        # Test directories that should be ignored
+        assert scanner._should_ignore_directory(Path("__pycache__"))
+        assert scanner._should_ignore_directory(Path(".git"))
+        assert scanner._should_ignore_directory(Path("node_modules"))
+        assert scanner._should_ignore_directory(Path(".venv"))
+        
+        # Test directories that should not be ignored
+        assert not scanner._should_ignore_directory(Path("assets"))
+        assert not scanner._should_ignore_directory(Path("textures"))
+        assert not scanner._should_ignore_directory(Path("scenes"))
     
     def test_find_backlinks_to_multiple_files(self):
         """Test finding backlinks to multiple files"""

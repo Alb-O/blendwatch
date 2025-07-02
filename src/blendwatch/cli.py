@@ -18,6 +18,7 @@ from colorama import init, Fore, Style
 
 from .watcher import FileWatcher
 from .config import Config, load_config, load_default_config
+from .backlinks import find_backlinks, BacklinkScanner
 
 # Initialize colorama for cross-platform colored output
 init()
@@ -227,6 +228,102 @@ def report(log_file: str, output_format: str, filter_type: str, since: Optional[
     
     except Exception as e:
         click.echo(f"{Fore.RED}Error reading log file: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+
+@main.command()
+@click.argument('target_asset', type=click.Path(exists=True))
+@click.argument('search_directory', type=click.Path(exists=True, file_okay=False))
+@click.option('--config', '-c', type=click.Path(),
+              help='Path to configuration file (TOML or JSON)')
+@click.option('--max-workers', '-w', default=4, type=int,
+              help='Number of parallel threads for scanning (default: 4)')
+@click.option('--output-format', '-f', 
+              type=click.Choice(['json', 'table'], case_sensitive=False),
+              default='table',
+              help='Output format (default: table)')
+@click.option('--verbose', '-v', is_flag=True,
+              help='Enable verbose output')
+def backlinks(target_asset: str, search_directory: str, config: Optional[str], 
+              max_workers: int, output_format: str, verbose: bool):
+    """Find all blend files that link to the target asset.
+    
+    TARGET_ASSET: Path to the asset file to find backlinks for
+    SEARCH_DIRECTORY: Directory to search for blend files
+    """
+    
+    # Load configuration
+    config_obj = None
+    config_file = config
+    
+    if not config_file:
+        # Look for default config file in current directory
+        default_config = Path("blendwatch.config.toml")
+        if default_config.exists():
+            config_file = str(default_config)
+            if verbose:
+                click.echo(f"{Fore.CYAN}Using default config: {config_file}{Style.RESET_ALL}")
+    
+    if config_file:
+        config_obj = load_config(config_file)
+        if not config_obj:
+            click.echo(f"{Fore.RED}Error: Could not load config file: {config_file}{Style.RESET_ALL}")
+            sys.exit(1)
+    
+    # Use default config if no config file provided
+    if not config_obj:
+        config_obj = load_default_config()
+    
+    try:
+        target_path = Path(target_asset)
+        search_path = Path(search_directory)
+        
+        if verbose:
+            click.echo(f"{Fore.GREEN}Searching for backlinks...{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Target: {target_path.name}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Search directory: {search_path}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Max workers: {max_workers}{Style.RESET_ALL}")
+            if config_obj.ignore_dirs:
+                click.echo(f"{Fore.CYAN}Ignoring directories: {', '.join(config_obj.ignore_dirs)}{Style.RESET_ALL}")
+        
+        # Find backlinks using the scanner with config
+        scanner = BacklinkScanner(search_path, config=config_obj)
+        results = scanner.find_backlinks_to_file(target_path, max_workers=max_workers)
+        
+        # Output results
+        if output_format == 'json':
+            # Convert results to JSON-serializable format
+            json_results = []
+            for result in results:
+                json_results.append({
+                    'blend_file': str(result.blend_file),
+                    'library_paths': result.library_paths,
+                    'matching_libraries': result.matching_libraries
+                })
+            click.echo(json.dumps(json_results, indent=2))
+        else:  # table format
+            if results:
+                click.echo(f"\n{Fore.GREEN}Found {len(results)} backlinks to {target_path.name}:{Style.RESET_ALL}\n")
+                
+                for i, result in enumerate(results, 1):
+                    click.echo(f"{Fore.YELLOW}{i:2d}.{Style.RESET_ALL} {Fore.CYAN}{result.blend_file.name}{Style.RESET_ALL}")
+                    click.echo(f"     Path: {result.blend_file}")
+                    click.echo(f"     Libraries: {Fore.MAGENTA}{', '.join(result.matching_libraries)}{Style.RESET_ALL}")
+                    
+                    if verbose:
+                        click.echo(f"     All library paths:")
+                        for lib_name, lib_path in result.library_paths.items():
+                            marker = Fore.GREEN + "→ " + Style.RESET_ALL if lib_name in result.matching_libraries else "  "
+                            click.echo(f"       {marker}{lib_name}: {lib_path}")
+                    click.echo()
+            else:
+                click.echo(f"{Fore.YELLOW}No backlinks found for {target_path.name}{Style.RESET_ALL}")
+    
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error finding backlinks: {e}{Style.RESET_ALL}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
         sys.exit(1)
 
 

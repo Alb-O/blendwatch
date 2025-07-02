@@ -6,12 +6,14 @@ which blend files link to a given asset or library file.
 """
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .library_writer import LibraryPathWriter
+from .config import Config, load_default_config
 
 log = logging.getLogger(__name__)
 
@@ -26,17 +28,46 @@ class BacklinkResult(NamedTuple):
 class BacklinkScanner:
     """Scanner for finding backlinks to blend files and assets."""
     
-    def __init__(self, search_directory: Union[str, Path]):
+    def __init__(self, search_directory: Union[str, Path], config: Optional[Config] = None):
         """Initialize the backlink scanner.
         
         Args:
             search_directory: Directory to search for blend files
+            config: Configuration object with ignore patterns. If None, uses default config.
         """
         self.search_directory = Path(search_directory)
         if not self.search_directory.exists():
             raise FileNotFoundError(f"Search directory not found: {self.search_directory}")
         if not self.search_directory.is_dir():
             raise ValueError(f"Search path must be a directory: {self.search_directory}")
+        
+        # Use provided config or load default
+        self.config = config if config is not None else load_default_config()
+        
+        # Compile regex patterns for ignore directories
+        self.ignore_patterns = []
+        for pattern in self.config.ignore_dirs:
+            try:
+                self.ignore_patterns.append(re.compile(pattern))
+            except re.error as e:
+                log.warning(f"Invalid ignore pattern '{pattern}': {e}")
+    
+    def _should_ignore_directory(self, directory: Path) -> bool:
+        """Check if a directory should be ignored based on config patterns.
+        
+        Args:
+            directory: Directory path to check
+            
+        Returns:
+            True if directory should be ignored, False otherwise
+        """
+        dir_name = directory.name
+        dir_path_str = str(directory)
+        
+        for pattern in self.ignore_patterns:
+            if pattern.search(dir_name) or pattern.search(dir_path_str):
+                return True
+        return False
     
     def find_blend_files(self) -> List[Path]:
         """Find all .blend files using native Python directory scanning.
@@ -45,9 +76,24 @@ class BacklinkScanner:
             List of paths to .blend files
         """
         start_time = time.time()
-        blend_files = list(self.search_directory.rglob("*.blend"))
-        duration = time.time() - start_time
+        blend_files = []
         
+        def _scan_directory(directory: Path):
+            """Recursively scan directory for blend files, respecting ignore patterns."""
+            try:
+                for item in directory.iterdir():
+                    if item.is_dir():
+                        # Skip ignored directories
+                        if not self._should_ignore_directory(item):
+                            _scan_directory(item)
+                    elif item.is_file() and item.suffix.lower() == '.blend':
+                        blend_files.append(item)
+            except (PermissionError, OSError) as e:
+                log.warning(f"Could not access directory {directory}: {e}")
+        
+        _scan_directory(self.search_directory)
+        
+        duration = time.time() - start_time
         log.info(f"Found {len(blend_files)} blend files in {duration:.2f}s")
         return blend_files
     
@@ -180,16 +226,18 @@ class BacklinkScanner:
 
 def find_backlinks(target_asset: Union[str, Path], 
                   search_directory: Union[str, Path],
-                  max_workers: int = 4) -> List[BacklinkResult]:
+                  max_workers: int = 4,
+                  config: Optional[Config] = None) -> List[BacklinkResult]:
     """Convenience function to find backlinks to a target asset.
     
     Args:
         target_asset: Path to the asset to find backlinks for
         search_directory: Directory to search for blend files
         max_workers: Number of threads to use for parallel processing
+        config: Configuration object with ignore patterns. If None, uses default config.
         
     Returns:
         List of BacklinkResult objects for files that link to the target
     """
-    scanner = BacklinkScanner(search_directory)
+    scanner = BacklinkScanner(search_directory, config=config)
     return scanner.find_backlinks_to_file(target_asset, max_workers=max_workers)
