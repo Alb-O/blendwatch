@@ -1,20 +1,17 @@
 # BlendWatch
 
-A CLI file watcher program specifically designed for tracking and determining file/directory rename/move operations with configurable extension filtering and directory ignore patterns.
+A CLI file watcher for tracking file and directory renames and moves with configurable filtering.
 
 ## Features
 
-- 🔍 **Intelligent File Tracking**: Detects file and directory renames/moves using filesystem events
-- 🎯 **Extension Filtering**: Monitor only the file types you care about (e.g., .blend, .py, .jpg)
-- 🚫 **Directory Exclusion**: Ignore directories using regex patterns (.git, **pycache**, node_modules, etc.)
-- ⚙️ **TOML Configuration**: Easy-to-read configuration files
-- 📊 **Multiple Output Formats**: JSON and human-readable text output
-- 🎨 **Colored Output**: Beautiful terminal output with colors
-- 📝 **Detailed Logging**: Track all file operations with timestamps
+- File and directory move/rename detection
+- Extension-based filtering
+- Directory ignore patterns with regex support
+- Cross-platform Windows event correlation
+- TOML configuration
+- JSON and text output formats
 
 ## Installation
-
-Using Poetry (recommended):
 
 ```bash
 poetry install
@@ -22,147 +19,80 @@ poetry install
 
 ## Quick Start
 
-1. **Initialize a configuration file:**
+Create a configuration file:
 
-   ```bash
-   poetry run blendwatch init-config config.toml
-   ```
+```bash
+poetry run blendwatch init-config
+```
 
-2. **Start watching a directory:**
+Start watching:
 
-   ```bash
-   poetry run blendwatch watch /path/to/watch --config config.toml
-   ```
-
-3. **Watch with custom extensions and ignore patterns:**
-   ```bash
-   poetry run blendwatch watch /path/to/watch \
-     --extensions .blend --extensions .py \
-     --ignore-dirs "\.git" --ignore-dirs "__pycache__"
-   ```
+```bash
+poetry run blendwatch watch /path/to/directory
+```
 
 ## Configuration
 
-BlendWatch uses TOML configuration files. Create one using:
-
-```bash
-poetry run blendwatch init-config my-config.toml
-```
-
-### Sample Configuration
+The default configuration file `blendwatch.config.toml` is automatically used if present:
 
 ```toml
-# File extensions to watch (include the dot)
-extensions = [
-    ".blend",
-    ".py",
-    ".txt",
-    ".json",
-    ".toml",
-    ".fbx",
-    ".obj",
-    ".png",
-    ".jpg",
-    ".jpeg"
-]
-
-# Directory patterns to ignore (regex patterns)
-ignore_dirs = [
-    "\\.git",          # Git directories
-    "__pycache__",     # Python cache
-    "\\.venv",         # Virtual environments
-    "node_modules",    # Node.js modules
-    "\\.DS_Store",     # macOS system files
-    "\\.tmp",          # Temporary directories
-    "\\.cache"         # Cache directories
-]
-
-# Output format: 'json' or 'text'
+extensions = [".blend", ".py", ".txt", ".json"]
+ignore_dirs = ["\\.git", "__pycache__", "\\.venv"]
 output_format = "json"
-
-# Log level: 'debug', 'info', 'warning', 'error'
 log_level = "info"
+debounce_delay = 2.0
 ```
 
 ## Usage
 
 ### Commands
 
-- `blendwatch watch PATH` - Start watching a directory
-- `blendwatch init-config CONFIG_FILE` - Create a sample configuration
-- `blendwatch report LOG_FILE` - Generate reports from log files
+- `blendwatch watch PATH` - Monitor directory for file operations
+- `blendwatch init-config [FILE]` - Generate configuration file
+- `blendwatch report LOG_FILE` - Analyze recorded events
 
 ### Options
 
-- `--extensions`, `-e` - File extensions to watch (can be used multiple times)
-- `--ignore-dirs`, `-i` - Directory patterns to ignore (regex, can be used multiple times)
-- `--config`, `-c` - Path to TOML configuration file
-- `--output`, `-o` - Output file to save events
-- `--verbose`, `-v` - Enable verbose output
-- `--recursive/--no-recursive` - Watch subdirectories (default: recursive)
+- `--config`, `-c` - Configuration file path
+- `--extensions`, `-e` - File extensions to monitor
+- `--ignore-dirs`, `-i` - Directory patterns to ignore
+- `--output`, `-o` - Log file path
+- `--verbose`, `-v` - Detailed output
+- `--recursive/--no-recursive` - Subdirectory monitoring
 
 ### Examples
 
-**Watch Blender project files:**
+Monitor with specific extensions:
 
 ```bash
-poetry run blendwatch watch ~/BlenderProjects \
-  --extensions .blend --extensions .py --extensions .fbx \
-  --ignore-dirs "\.git" --ignore-dirs "backup"
+poetry run blendwatch watch ~/projects --extensions .py --extensions .js
 ```
 
-**Watch with configuration file:**
+Use custom configuration:
 
 ```bash
-poetry run blendwatch watch ~/Projects --config project.toml --output changes.log
-```
-
-**Generate reports:**
-
-```bash
-poetry run blendwatch report changes.log --format table --filter-type moved
+poetry run blendwatch watch ~/data --config custom.toml --output events.log
 ```
 
 ## Output Format
 
-### JSON Output
+JSON events:
 
 ```json
 {
 	"timestamp": "2025-07-02T10:30:45.123456",
-	"event_type": "moved",
-	"src_path": "/old/path/file.blend",
-	"dest_path": "/new/path/file.blend",
+	"type": "file_moved",
+	"old_path": "/src/file.txt",
+	"new_path": "/dst/file.txt",
 	"is_directory": false
 }
 ```
 
-### Text Output
+## Windows Compatibility
 
-```
-[2025-07-02 10:30:45] MOVED: /old/path/file.blend -> /new/path/file.blend
-```
-
-## Use Cases
-
-- **Blender Asset Management**: Track when .blend files and assets are moved or renamed
-- **Project Organization**: Monitor file reorganization in large codebases
-- **Backup Verification**: Ensure important files haven't been accidentally moved
-- **Build System Integration**: Track source file movements for build tools
-- **Version Control**: Monitor file operations outside of git tracking
+Automatically correlates delete+create event pairs into move operations when files are moved between drives or folders on Windows systems. Correlation timeout is configurable via `debounce_delay`.
 
 ## Requirements
 
 - Python 3.13+
-- Poetry (for dependency management)
-
-## Dependencies
-
-- `watchdog>=4.0.0` - Cross-platform file system event monitoring
-- `click>=8.1.0` - Command-line interface creation
-- `colorama>=0.4.6` - Cross-platform colored terminal output
-- `tomli>=2.0.0` - TOML parsing
-
-## License
-
-This project is open source. See the LICENSE file for details.
+- watchdog, click, colorama, tomli

@@ -9,7 +9,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from watchdog.events import FileMovedEvent, DirMovedEvent
+from watchdog.events import (
+    FileMovedEvent, 
+    DirMovedEvent, 
+    FileDeletedEvent, 
+    FileCreatedEvent,
+    DirDeletedEvent,
+    DirCreatedEvent
+)
 
 from blendwatch.watcher import FileWatcher, MoveTrackingHandler
 
@@ -147,6 +154,151 @@ class TestMoveTrackingHandler:
         assert len(events) == 2
         assert 'renamed' in events[0]['type']
         assert 'moved' in events[1]['type']
+    
+    def test_windows_style_move_correlation(self):
+        """Test correlation of delete + create events into move events (same filename, different folders)"""
+        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
+        
+        # Create mock delete event
+        delete_event = FileDeletedEvent('/old/folder/file.txt')
+        
+        # Create mock create event with same filename in different folder
+        create_event = FileCreatedEvent('/new/folder/file.txt')
+        
+        # Simulate the delete event first
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_deleted(delete_event)
+        
+        # Should have no move events yet
+        assert len(handler.move_events) == 0
+        
+        # Now simulate the create event
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_created(create_event)
+        
+        # Should now have a correlated move event
+        assert len(handler.move_events) == 1
+        event = handler.move_events[0]
+        assert event['type'] == 'file_moved'
+        assert event['old_path'] == '/old/folder/file.txt'
+        assert event['new_path'] == '/new/folder/file.txt'
+        assert event['correlated'] == True
+
+    def test_windows_style_different_filenames_no_correlation(self):
+        """Test that files with different names are NOT correlated (current logic requires same filename)"""
+        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
+        
+        # Create mock delete event
+        delete_event = FileDeletedEvent('/same/path/oldname.txt')
+        
+        # Create mock create event with different filename in same directory
+        create_event = FileCreatedEvent('/same/path/newname.txt')
+        
+        # Simulate the events
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_deleted(delete_event)
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_created(create_event)
+        
+        # Should NOT correlate because filenames are different
+        # (Current logic only handles moves with same filename)
+        assert len(handler.move_events) == 0
+
+    def test_event_correlation_timeout(self):
+        """Test that events outside timeout window are not correlated"""
+        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=0.1)
+        
+        delete_event = FileDeletedEvent('/old/path/file.txt')
+        create_event = FileCreatedEvent('/new/path/file.txt')
+        
+        # Simulate delete event
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_deleted(delete_event)
+        
+        # Wait longer than timeout
+        time.sleep(0.2)
+        
+        # Simulate create event
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_created(create_event)
+        
+        # Should not correlate due to timeout
+        assert len(handler.move_events) == 0
+
+    def test_directory_correlation(self):
+        """Test correlation of directory delete + create events"""
+        handler = MoveTrackingHandler([], [], event_correlation_timeout=1.0)
+        
+        # Create mock directory events with same directory name
+        delete_event = DirDeletedEvent('/old/location/mydir')
+        create_event = DirCreatedEvent('/new/location/mydir')
+        
+        # Simulate directory events
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 0  # directories typically have size 0 or 4096
+            handler.on_deleted(delete_event)
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 0
+            handler.on_created(create_event)
+        
+        # Should have a correlated directory move
+        assert len(handler.move_events) == 1
+        event = handler.move_events[0]
+        assert event['type'] == 'directory_moved'
+        assert event['is_directory'] == True
+        assert event['correlated'] == True
+
+    def test_flush_pending_events(self):
+        """Test flushing of unmatched pending events"""
+        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
+        
+        # Create unmatched delete event
+        delete_event = FileDeletedEvent('/deleted/file1.txt')
+        
+        with patch('pathlib.Path.exists', return_value=False), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024
+            handler.on_deleted(delete_event)
+        
+        # Create unmatched create event with different filename
+        create_event = FileCreatedEvent('/created/file2.txt')
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 1024  # Same size but different filename, won't correlate
+            handler.on_created(create_event)
+        
+        # Flush pending events
+        unmatched = handler.flush_pending_events()
+        
+        # Should have 2 unmatched events
+        assert len(unmatched) == 2
+        
+        # Check delete event
+        delete_unmatched = next(e for e in unmatched if e['type'] == 'file_deleted')
+        assert delete_unmatched['path'] == '/deleted/file1.txt'
+        assert delete_unmatched['unmatched'] == True
+        
+        # Check create event
+        create_unmatched = next(e for e in unmatched if e['type'] == 'file_created')
+        assert create_unmatched['path'] == '/created/file2.txt'
+        assert create_unmatched['unmatched'] == True
 
 
 class TestFileWatcher:
