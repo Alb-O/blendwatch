@@ -94,5 +94,5 @@ Automatically correlates delete+create event pairs into move operations when fil
 
 ## Requirements
 
-- Python 3.13+
-- watchdog, click, colorama, tomli
+- Python 3.9+
+- watchdog, click, colorama, tomli, blender-asset-tracer
