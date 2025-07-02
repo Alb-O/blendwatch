@@ -187,7 +187,7 @@ class TestBacklinkResult:
         
         # Should not be able to modify fields (NamedTuple is immutable)
         with pytest.raises(AttributeError):
-            result.blend_file = Path("other.blend")
+            result.blend_file = Path("other.blend")  # type: ignore[misc]
 
 
 class TestRealBlendFileIntegration:
