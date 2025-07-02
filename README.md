@@ -103,3 +103,47 @@ Automatically correlates delete+create event pairs into move operations when fil
 
 - Python 3.9+
 - watchdog, click, colorama, tomli, blender-asset-tracer
+
+## Working with Large Asset Libraries
+
+BlendWatch scales well when watching a directory tree full of linked
+libraries.  A common layout might look like:
+
+```
+/assets
+├── characters
+│   ├── hero.blend
+│   └── materials
+├── environments
+│   ├── forest.blend
+│   └── textures
+└── props
+    └── tools.blend
+```
+
+Create a configuration file in the root of the library and include the file
+extensions you use for assets (such as `.blend`, `.fbx`, `.png`).  Then start a
+recursive watcher for the entire tree:
+
+```bash
+poetry run blendwatch init-config
+poetry run blendwatch watch /assets --recursive --verbose
+```
+
+As you reorganise or rename files inside the library, BlendWatch logs the move
+operations.  You can later run `blendwatch backlinks` to identify which blend
+files reference a library that was moved.  This workflow helps keep very large
+libraries of linked assets consistent without opening each file in Blender.
+
+### Automatically Fix Broken Links
+
+The `blender-asset-tracer` library lets BlendWatch rewrite library paths
+directly inside `.blend` files.  After reorganising your assets you can run:
+
+```bash
+poetry run blendwatch update-links watch.log /assets
+```
+
+This command parses the move log created by the watcher, scans the asset tree
+for any blend files referencing the old paths and updates them to the new
+locations.  Use `--dry-run` to preview the changes without modifying files.

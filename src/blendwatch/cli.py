@@ -231,6 +231,30 @@ def report(log_file: str, output_format: str, filter_type: str, since: Optional[
         sys.exit(1)
 
 
+@main.command('update-links')
+@click.argument('log_file', type=click.Path(exists=True))
+@click.argument('search_directory', type=click.Path(exists=True, file_okay=False))
+@click.option('--dry-run', is_flag=True, help='Show changes without modifying files')
+@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+def update_links_cmd(log_file: str, search_directory: str, dry_run: bool, verbose: bool):
+    """Update linked library paths based on a move log."""
+
+    from .link_updater import apply_move_log
+
+    try:
+        updated = apply_move_log(log_file, search_directory, dry_run=dry_run, verbose=verbose)
+        if dry_run:
+            click.echo(f"{Fore.CYAN}Would update {updated} library paths{Style.RESET_ALL}")
+        else:
+            click.echo(f"{Fore.GREEN}Updated {updated} library paths{Style.RESET_ALL}")
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error updating links: {e}{Style.RESET_ALL}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
 @main.command()
 @click.argument('target_asset', type=click.Path(exists=True))
 @click.argument('search_directory', type=click.Path(exists=True, file_okay=False))

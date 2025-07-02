@@ -4,13 +4,16 @@ Tests for the CLI module
 
 import json
 import tempfile
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from blendwatch.cli import main, watch, init_config
+from blendwatch.library_writer import LibraryPathWriter
 
 
 class TestCLI:
@@ -310,3 +313,88 @@ ignore_dirs = ["config_ignore"]
                         # CLI args should override config
                         assert '.cli' in call_args.kwargs['extensions']
                         assert 'cli_ignore' in call_args.kwargs['ignore_dirs']
+
+
+class TestUpdateLinksCommand:
+    """Tests for the update-links CLI command"""
+
+    def setup_method(self):
+        self.runner = CliRunner()
+
+    def test_update_links_basic(self, tmp_path):
+        blend_src = Path('tests/blendfiles/linked_cube.blend')
+        blend_copy = tmp_path / 'linked_cube.blend'
+        shutil.copy2(blend_src, blend_copy)
+
+        writer = LibraryPathWriter(blend_copy)
+        libs = writer.get_library_paths()
+        if not libs:
+            pytest.skip('No libraries in test blend file')
+
+        old_path = next(iter(libs.values()))
+        new_path = old_path + '.moved'
+
+        log_file = tmp_path / 'watch.log'
+        with open(log_file, 'w') as f:
+            json.dump({
+                'timestamp': 'now',
+                'type': 'file_moved',
+                'old_path': old_path,
+                'new_path': new_path,
+                'is_directory': False
+            }, f)
+            f.write('\n')
+
+        result = self.runner.invoke(main, [
+            'update-links', str(log_file), str(tmp_path)
+        ])
+
+        assert result.exit_code == 0
+        updated = LibraryPathWriter(blend_copy).get_library_paths()
+        assert new_path in updated.values()
+
+class TestBacklinksCommand:
+    """Tests for the backlinks CLI command"""
+
+    def setup_method(self):
+        self.runner = CliRunner()
+
+    @patch('blendwatch.cli.BacklinkScanner')
+    @patch('blendwatch.cli.load_default_config')
+    def test_backlinks_json_output(self, mock_load_default, mock_scanner, tmp_path):
+        from blendwatch.config import Config
+        mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])
+        result_obj = SimpleNamespace(
+            blend_file=tmp_path / 'file.blend',
+            library_paths={'lib':'/path/lib.blend'},
+            matching_libraries=['lib']
+        )
+        mock_scanner.return_value.find_backlinks_to_file.return_value = [result_obj]
+        target = tmp_path / 'asset.blend'
+        target.touch()
+        search_dir = tmp_path / 'search'
+        search_dir.mkdir()
+        res = self.runner.invoke(main, ['backlinks', str(target), str(search_dir), '--output-format', 'json'])
+        assert res.exit_code == 0
+        assert 'file.blend' in res.output
+        assert 'matching_libraries' in res.output
+
+    @patch('blendwatch.cli.BacklinkScanner')
+    @patch('blendwatch.cli.load_default_config')
+    def test_backlinks_table_verbose(self, mock_load_default, mock_scanner, tmp_path):
+        from blendwatch.config import Config
+        mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])
+        result_obj = SimpleNamespace(
+            blend_file=tmp_path / 'file.blend',
+            library_paths={'lib':'/path/lib.blend'},
+            matching_libraries=['lib']
+        )
+        mock_scanner.return_value.find_backlinks_to_file.return_value = [result_obj]
+        target = tmp_path / 'asset.blend'
+        target.touch()
+        search_dir = tmp_path / 'search'
+        search_dir.mkdir()
+        res = self.runner.invoke(main, ['backlinks', str(target), str(search_dir), '--verbose'])
+        assert res.exit_code == 0
+        assert 'Found' in res.output
+        assert 'file.blend' in res.output
