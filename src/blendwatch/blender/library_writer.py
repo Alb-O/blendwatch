@@ -100,8 +100,15 @@ class LibraryPathWriter:
             flexible_mapping[old_path] = new_path
             
             # Add filename-based mapping for cross-platform compatibility
-            old_filename = Path(old_path).name
-            flexible_mapping[old_filename] = new_path
+            # Handle Blender relative paths (starting with //) specially
+            if old_path.startswith('//'):
+                # For Blender relative paths, extract filename manually
+                old_filename = old_path[2:].split('/')[-1].split('\\')[-1]
+            else:
+                old_filename = Path(old_path).name
+            
+            if old_filename:  # Only add if filename is not empty
+                flexible_mapping[old_filename] = new_path
         
         with blendfile.BlendFile(self.blend_file_path, mode="r+b") as bf:
             # Get all library blocks (LI = Library)
@@ -133,8 +140,13 @@ class LibraryPathWriter:
                     
                     # Strategy 2: Filename match (for cross-platform compatibility)
                     if new_path is None:
-                        current_filename = Path(current_filepath_str).name
-                        if current_filename in flexible_mapping:
+                        # Handle Blender relative paths specially
+                        if current_filepath_str.startswith('//'):
+                            current_filename = current_filepath_str[2:].split('/')[-1].split('\\')[-1]
+                        else:
+                            current_filename = Path(current_filepath_str).name
+                        
+                        if current_filename and current_filename in flexible_mapping:
                             new_path = flexible_mapping[current_filename]
                     
                     # Strategy 3: Relative path resolution

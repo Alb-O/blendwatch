@@ -324,7 +324,7 @@ class TestFileWatcher:
     
     def test_watcher_initialization(self):
         """Test FileWatcher initialization"""
-        assert str(self.watcher.watch_path) == self.watch_path
+        assert self.watcher.watch_path == Path(self.watch_path)
         assert self.watcher.extensions == self.extensions
         assert self.watcher.ignore_dirs == self.ignore_dirs
         assert self.watcher.recursive == self.recursive
@@ -386,7 +386,7 @@ class TestFileWatcher:
             verbose=True
         )
         
-        assert str(watcher.watch_path) == '/custom/path'
+        assert watcher.watch_path == Path('/custom/path')
         assert watcher.extensions == ['.blend', '.fbx']
         assert watcher.ignore_dirs == [r'\.git', r'backup']
         assert watcher.recursive == False
