@@ -143,9 +143,8 @@ class BacklinkScanner:
             List of BacklinkResult objects for files that link to the target
         """
         target_asset = resolve_path(str(target_asset))
-        if not target_asset.exists():
-            log.debug(f"Target asset (old path) does not exist: {target_asset} - this is expected if the file was moved/renamed")
-            return []  # Return empty list if target doesn't exist
+        # Note: We don't check if target_asset exists anymore because for rename operations,
+        # the old path is expected to not exist after the rename
         
         start_time = time.time()
         
