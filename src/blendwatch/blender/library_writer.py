@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from blender_asset_tracer import blendfile
+from blendwatch.utils.path_utils import resolve_path, get_relative_path
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class LibraryPathWriter:
         Args:
             blend_file_path: Path to the .blend file to modify
         """
-        self.blend_file_path = Path(blend_file_path)
+        self.blend_file_path = resolve_path(str(blend_file_path))
         if not self.blend_file_path.exists():
             raise FileNotFoundError(f"Blend file not found: {self.blend_file_path}")
         if not self.blend_file_path.suffix.lower() == '.blend':
@@ -242,7 +243,7 @@ class LibraryPathWriter:
         if base_path is None:
             base_path = self.blend_file_path.parent
         else:
-            base_path = Path(base_path)
+            base_path = resolve_path(str(base_path))
         
         converted_count = 0
         path_mapping = {}
@@ -254,16 +255,14 @@ class LibraryPathWriter:
             # Skip if already relative
             if filepath.startswith('//'):
                 continue
-            
             try:
-                abs_path = Path(filepath)
-                if abs_path.is_absolute():
-                    # Convert to relative path
-                    rel_path = Path('//') / abs_path.relative_to(base_path)
+                abs_path = resolve_path(filepath)
+                rel_path = get_relative_path(abs_path, base_path)
+                if rel_path is not None:
+                    rel_path = Path('//') / rel_path
                     path_mapping[filepath] = str(rel_path).replace('\\', '/')
                     converted_count += 1
             except (ValueError, OSError):
-                # Path cannot be made relative
                 log.warning(f"Cannot make path relative: {filepath}")
                 continue
         
@@ -285,7 +284,7 @@ class LibraryPathWriter:
         if base_path is None:
             base_path = self.blend_file_path.parent
         else:
-            base_path = Path(base_path)
+            base_path = resolve_path(str(base_path))
         
         converted_count = 0
         path_mapping = {}
@@ -297,13 +296,11 @@ class LibraryPathWriter:
             # Only process relative paths (those starting with //)
             if filepath.startswith('//'):
                 try:
-                    # Remove the // prefix and make absolute
                     rel_part = filepath[2:]
-                    abs_path = base_path / rel_part
-                    path_mapping[filepath] = str(abs_path.resolve())
+                    abs_path = resolve_path(str(base_path / rel_part))
+                    path_mapping[filepath] = str(abs_path)
                     converted_count += 1
                 except (ValueError, OSError):
-                    # Path cannot be made absolute
                     log.warning(f"Cannot make path absolute: {filepath}")
                     continue
         

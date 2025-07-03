@@ -14,9 +14,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from blendwatch.blender.library_writer import LibraryPathWriter
 from blendwatch.core.config import Config, load_default_config
+from blendwatch.utils.path_utils import resolve_path, is_path_ignored, find_files_by_extension
 
 log = logging.getLogger(__name__)
-
 
 class BacklinkResult(NamedTuple):
     """Result of a backlink search."""
@@ -35,7 +35,7 @@ class BacklinkScanner:
             search_directory: Directory to search for blend files
             config: Configuration object with ignore patterns. If None, uses default config.
         """
-        self.search_directory = Path(search_directory)
+        self.search_directory = resolve_path(str(search_directory))
         if not self.search_directory.exists():
             raise FileNotFoundError(f"Search directory not found: {self.search_directory}")
         if not self.search_directory.is_dir():
@@ -61,41 +61,37 @@ class BacklinkScanner:
         Returns:
             True if directory should be ignored, False otherwise
         """
-        dir_name = directory.name
-        dir_path_str = str(directory)
-        
-        for pattern in self.ignore_patterns:
-            if pattern.search(dir_name) or pattern.search(dir_path_str):
-                return True
-        return False
+        return is_path_ignored(directory, self.config.ignore_dirs)
     
     def find_blend_files(self) -> List[Path]:
-        """Find all .blend files using native Python directory scanning.
+        """Find all .blend files using the path utilities.
         
         Returns:
             List of paths to .blend files
         """
         start_time = time.time()
-        blend_files = []
         
-        def _scan_directory(directory: Path):
-            """Recursively scan directory for blend files, respecting ignore patterns."""
-            try:
-                for item in directory.iterdir():
-                    if item.is_dir():
-                        # Skip ignored directories
-                        if not self._should_ignore_directory(item):
-                            _scan_directory(item)
-                    elif item.is_file() and item.suffix.lower() == '.blend':
-                        blend_files.append(item)
-            except (PermissionError, OSError) as e:
-                log.warning(f"Could not access directory {directory}: {e}")
+        # Use the utility function to find blend files
+        blend_files = find_files_by_extension(self.search_directory, ['.blend'], recursive=True)
         
-        _scan_directory(self.search_directory)
+        # Filter out files in ignored directories
+        filtered_files = []
+        for blend_file in blend_files:
+            # Check if any parent directory should be ignored
+            should_ignore = False
+            for parent in blend_file.parents:
+                if parent == self.search_directory:
+                    break  # Don't check the search directory itself
+                if self._should_ignore_directory(parent):
+                    should_ignore = True
+                    break
+            
+            if not should_ignore:
+                filtered_files.append(blend_file)
         
         duration = time.time() - start_time
-        log.info(f"Found {len(blend_files)} blend files in {duration:.2f}s")
-        return blend_files
+        log.info(f"Found {len(filtered_files)} blend files in {duration:.2f}s")
+        return filtered_files
     
     def _check_blend_file_for_target(self, blend_file: Path, target_asset: Path) -> Optional[BacklinkResult]:
         """Check if a blend file links to the target asset.
@@ -146,7 +142,7 @@ class BacklinkScanner:
         Returns:
             List of BacklinkResult objects for files that link to the target
         """
-        target_asset = Path(target_asset)
+        target_asset = resolve_path(str(target_asset))
         if not target_asset.exists():
             log.warning(f"Target asset (old path) does not exist: {target_asset} - this is expected if the file was moved/renamed")
         
@@ -192,7 +188,7 @@ class BacklinkScanner:
         Returns:
             Dictionary mapping target assets to their backlink results
         """
-        target_assets = [Path(asset) for asset in target_assets]
+        target_assets = [resolve_path(str(asset)) for asset in target_assets]
         results = {}
         
         # Find all blend files once
