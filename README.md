@@ -1,15 +1,16 @@
 # BlendWatch
 
-A CLI file watcher for tracking file and directory renames and moves with configurable filtering.
+A CLI file watcher for tracking file and directory renames and moves with intelligent link management for Blender projects.
 
 ## Features
 
-- File and directory move/rename detection
-- Extension-based filtering
-- Directory ignore patterns with regex support
-- Cross-platform Windows event correlation
-- TOML configuration
+- File and directory move/rename detection with cross-platform compatibility
+- Automatic Blender library path updates after file moves
+- Extension-based filtering and directory ignore patterns with regex support
+- Smart defaults and working directory context
+- TOML configuration with sensible defaults
 - JSON and text output formats
+- One-command auto-sync workflow
 
 ## Installation
 
@@ -17,23 +18,33 @@ A CLI file watcher for tracking file and directory renames and moves with config
 poetry install
 ```
 
+> **Note:** Examples below assume `blendwatch` is in your PATH. If using Poetry, prefix commands with `poetry run` (e.g., `poetry run blendwatch sync`).
+
 ## Quick Start
 
-Create a configuration file:
+**Auto-sync mode (recommended):**
 
 ```bash
-poetry run blendwatch init-config
+blendwatch sync
 ```
 
-Start watching:
+**Manual workflow:**
 
 ```bash
-poetry run blendwatch watch /path/to/directory
+blendwatch watch          # Start watching (uses current directory)
+# ... move/rename files ...
+blendwatch update         # Update blend file links
+```
+
+**Check project status:**
+
+```bash
+blendwatch status
 ```
 
 ## Configuration
 
-The default configuration file `blendwatch.config.toml` is automatically used if present:
+The default configuration file `blendwatch.config.toml` is automatically detected:
 
 ```toml
 extensions = [".blend", ".py", ".txt", ".json"]
@@ -45,40 +56,76 @@ debounce_delay = 2.0
 
 ## Usage
 
-### Commands
+### Core Commands
 
-- `blendwatch watch PATH` - Monitor directory for file operations
-- `blendwatch backlinks TARGET_ASSET SEARCH_DIR` - Find blend files linking to target
-- `blendwatch init-config [FILE]` - Generate configuration file
-- `blendwatch report LOG_FILE` - Analyze recorded events
+- `blendwatch sync` - Watch and auto-update links (one-command solution)
+- `blendwatch watch [PATH]` - Monitor directory for file operations (defaults to current directory)
+- `blendwatch update [LOG] [DIR]` - Update library paths from move log (smart defaults)
+- `blendwatch backlinks TARGET [DIR]` - Find blend files linking to target asset
+- `blendwatch status [DIR]` - Show current project status and suggestions
 
-### Options
+### Aliases
+
+- `blendwatch w` - Short for `watch`
+- `blendwatch links` - Short for `backlinks`
+- `blendwatch auto` - Short for `sync`
+
+### Common Workflows
+
+**Start tracking in current project:**
+
+```bash
+blendwatch sync                    # Auto-sync mode
+# or
+blendwatch watch                   # Manual mode
+```
+
+**Update links after reorganizing files:**
+
+```bash
+blendwatch update                  # Uses blendwatch.log and current directory
+```
+
+**Find which files link to an asset:**
+
+```bash
+blendwatch links my_asset.blend    # Search current directory
+```
+
+**Check what's happening:**
+
+```bash
+blendwatch status                  # Shows config, logs, blend files, and suggestions
+```
+
+### Advanced Options
+
+All commands support these options where applicable:
 
 - `--config`, `-c` - Configuration file path
-- `--extensions`, `-e` - File extensions to monitor
-- `--ignore-dirs`, `-i` - Directory patterns to ignore
-- `--output`, `-o` - Log file path
 - `--verbose`, `-v` - Detailed output
-- `--recursive/--no-recursive` - Subdirectory monitoring
+- `--dry-run` - Preview changes without modifying files
+- `--output`, `-o` - Custom log file path
 
 ### Examples
 
-Monitor with specific extensions:
+**Custom configuration:**
 
 ```bash
-poetry run blendwatch watch ~/projects --extensions .py --extensions .js
+blendwatch init-config my-config.toml
+blendwatch watch --config my-config.toml
 ```
 
-Use custom configuration:
+**Monitor specific extensions:**
 
 ```bash
-poetry run blendwatch watch ~/data --config custom.toml --output events.log
+blendwatch watch --extensions .blend --extensions .fbx
 ```
 
-Find backlinks to a blend file:
+**Verbose output with custom log:**
 
 ```bash
-poetry run blendwatch backlinks assets/character.blend ~/projects
+blendwatch watch --verbose --output my-changes.log
 ```
 
 ## Output Format
@@ -106,8 +153,7 @@ Automatically correlates delete+create event pairs into move operations when fil
 
 ## Working with Large Asset Libraries
 
-BlendWatch scales well when watching a directory tree full of linked
-libraries.  A common layout might look like:
+BlendWatch excels at managing directory trees full of linked Blender libraries. A typical asset library structure:
 
 ```
 /assets
@@ -121,29 +167,29 @@ libraries.  A common layout might look like:
     └── tools.blend
 ```
 
-Create a configuration file in the root of the library and include the file
-extensions you use for assets (such as `.blend`, `.fbx`, `.png`).  Then start a
-recursive watcher for the entire tree:
+**Simple setup:**
 
 ```bash
-poetry run blendwatch init-config
-poetry run blendwatch watch /assets --recursive --verbose
+cd /assets
+blendwatch init-config                # Create configuration
+blendwatch sync                       # Start auto-sync mode
 ```
 
-As you reorganise or rename files inside the library, BlendWatch logs the move
-operations.  You can later run `blendwatch backlinks` to identify which blend
-files reference a library that was moved.  This workflow helps keep very large
-libraries of linked assets consistent without opening each file in Blender.
-
-### Automatically Fix Broken Links
-
-The `blender-asset-tracer` library lets BlendWatch rewrite library paths
-directly inside `.blend` files.  After reorganising your assets you can run:
+**Alternative manual workflow:**
 
 ```bash
-poetry run blendwatch update-links watch.log /assets
+cd /assets
+blendwatch watch --verbose           # Start watching
+# ... reorganize files ...
+blendwatch update                     # Fix all broken links
 ```
 
-This command parses the move log created by the watcher, scans the asset tree
-for any blend files referencing the old paths and updates them to the new
-locations.  Use `--dry-run` to preview the changes without modifying files.
+As you reorganize or rename files, BlendWatch automatically logs moves and updates any blend files that reference the moved assets. This keeps large libraries consistent without opening each file in Blender.
+
+### Key Benefits
+
+- **Zero-configuration**: Works out of the box with sensible defaults
+- **Automatic link updates**: No more broken references after reorganizing
+- **Safe operations**: Use `--dry-run` to preview changes
+- **Cross-platform**: Handles different path formats seamlessly
+- **Scalable**: Efficiently processes large asset libraries
