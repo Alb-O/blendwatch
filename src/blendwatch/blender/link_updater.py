@@ -34,7 +34,11 @@ def parse_move_log(log_file: Union[str, Path], start_position: int = 0) -> Tuple
         f.seek(start_position)
         current_position = start_position
         
-        for line in f:
+        while True:
+            line = f.readline()
+            if not line:  # End of file
+                break
+                
             try:
                 event = json.loads(line.strip())
             except json.JSONDecodeError:
@@ -170,49 +174,5 @@ def apply_move_log(
                         print(f"Updated {result.blend_file} -> {new_path}")
             except Exception as e:
                 log.warning(f"Could not update {result.blend_file}: {e}")
-
-    return total_updates
-    """Update library paths for all move operations recorded in ``log_file``.
-
-    Parameters
-    ----------
-    log_file:
-        Path to a JSON move log produced by ``blendwatch watch``.
-    search_directory:
-        Directory containing blend files that reference the moved assets.
-    dry_run:
-        If True, do not modify any files but report what would change.
-    verbose:
-        Print information about every update performed.
-
-    Returns
-    -------
-    int
-        Number of library paths updated across all blend files.
-    """
-    moves = parse_move_log(log_file)
-    if not moves:
-        return 0
-
-    scanner = BacklinkScanner(search_directory)
-    total_updates = 0
-
-    for old_path, new_path in moves:
-        results = scanner.find_backlinks_to_file(old_path)
-        for result in results:
-            writer = LibraryPathWriter(result.blend_file)
-            if dry_run:
-                current = writer.get_library_paths()
-                if old_path in current.values():
-                    total_updates += 1
-                    if verbose:
-                        print(f"Would update {result.blend_file} -> {new_path}")
-                continue
-
-            updated = writer.update_library_path(old_path, new_path)
-            if updated:
-                total_updates += 1
-                if verbose:
-                    print(f"Updated {result.blend_file} -> {new_path}")
 
     return total_updates
