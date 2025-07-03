@@ -333,7 +333,7 @@ class TestFileWatcher:
         assert self.watcher.observer is not None
         assert self.watcher.event_handler is not None
     
-    @patch('blendwatch.watcher.Observer')
+    @patch('blendwatch.core.watcher.Observer')
     def test_start_watching(self, mock_observer_class):
         """Test starting the file watcher"""
         mock_observer = Mock()
@@ -353,7 +353,7 @@ class TestFileWatcher:
         mock_observer.schedule.assert_called_once()
         mock_observer.start.assert_called_once()
     
-    @patch('blendwatch.watcher.Observer')
+    @patch('blendwatch.core.watcher.Observer')
     def test_stop_watching(self, mock_observer_class):
         """Test stopping the file watcher"""
         mock_observer = Mock()
@@ -374,14 +374,15 @@ class TestFileWatcher:
         mock_observer.stop.assert_called_once()
         mock_observer.join.assert_called_once()
     
-    def test_watcher_with_custom_parameters(self):
+    def test_watcher_with_custom_parameters(self, tmp_path):
         """Test FileWatcher with custom parameters"""
+        log_file = tmp_path / 'log.json'
         watcher = FileWatcher(
             watch_path='/custom/path',
             extensions=['.blend', '.fbx'],
             ignore_dirs=[r'\.git', r'backup'],
             recursive=False,
-            output_file='/tmp/log.json',
+            output_file=str(log_file),
             verbose=True
         )
         
@@ -389,7 +390,7 @@ class TestFileWatcher:
         assert watcher.extensions == ['.blend', '.fbx']
         assert watcher.ignore_dirs == [r'\.git', r'backup']
         assert watcher.recursive == False
-        assert watcher.output_file == '/tmp/log.json'
+        assert watcher.output_file == str(log_file)
         assert watcher.verbose == True
     
     def test_get_events(self):
@@ -399,7 +400,7 @@ class TestFileWatcher:
         # Initially should be empty
         assert len(events) == 0
     
-    @patch('blendwatch.watcher.Observer')
+    @patch('blendwatch.core.watcher.Observer')
     def test_is_alive(self, mock_observer_class):
         """Test checking if watcher is alive"""
         mock_observer = Mock()

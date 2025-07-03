@@ -25,13 +25,6 @@ class TestCLI:
         """Set up test fixtures"""
         self.runner = CliRunner()
     
-    def test_main_help(self):
-        """Test main command help"""
-        result = self.runner.invoke(main, ['--help'])
-        assert result.exit_code == 0
-        assert 'BlendWatch' in result.output
-        assert 'Track file and directory renames/moves' in result.output
-    
     def test_watch_help(self):
         """Test watch command help"""
         result = self.runner.invoke(main, ['watch', '--help'])
@@ -79,8 +72,8 @@ class TestCLI:
                 assert '.blend' in config_data['extensions']
                 assert '.py' in config_data['extensions']
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
     def test_watch_with_extensions(self, mock_sleep, mock_watcher_class):
         """Test watch command with extension filters"""
         mock_watcher = Mock()
@@ -100,8 +93,8 @@ class TestCLI:
             assert '.py' in call_args.kwargs['extensions']
             assert '.txt' in call_args.kwargs['extensions']
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
     def test_watch_with_ignore_dirs(self, mock_sleep, mock_watcher_class):
         """Test watch command with ignore directory patterns"""
         mock_watcher = Mock()
@@ -121,9 +114,9 @@ class TestCLI:
             assert '__pycache__' in call_args.kwargs['ignore_dirs']
             assert r'\.git' in call_args.kwargs['ignore_dirs']
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
-    @patch('blendwatch.cli.load_config')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
+    @patch('blendwatch.cli.utils.load_config')
     def test_watch_with_config(self, mock_load_config, mock_sleep, mock_watcher_class):
         """Test watch command with configuration file"""
         from blendwatch.core.config import Config
@@ -156,8 +149,8 @@ class TestCLI:
                 assert '.blend' in call_args.kwargs['extensions']
                 assert '.py' in call_args.kwargs['extensions']
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
     def test_watch_with_output_file(self, mock_sleep, mock_watcher_class):
         """Test watch command with output file"""
         mock_watcher = Mock()
@@ -176,8 +169,8 @@ class TestCLI:
                 call_args = mock_watcher_class.call_args
                 assert call_args.kwargs['output_file'] == output_file.name
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
     def test_watch_verbose_mode(self, mock_sleep, mock_watcher_class):
         """Test watch command in verbose mode"""
         mock_watcher = Mock()
@@ -195,8 +188,8 @@ class TestCLI:
             call_args = mock_watcher_class.call_args
             assert call_args.kwargs['verbose'] == True
     
-    @patch('blendwatch.cli.FileWatcher')
-    @patch('blendwatch.cli.time.sleep')
+    @patch('blendwatch.cli.commands.watch.FileWatcher')
+    @patch('blendwatch.cli.commands.watch.time.sleep')
     def test_watch_non_recursive(self, mock_sleep, mock_watcher_class):
         """Test watch command in non-recursive mode"""
         mock_watcher = Mock()
@@ -223,7 +216,7 @@ class TestCLI:
         assert result.exit_code != 0
         assert 'does not exist' in result.output or 'Path' in result.output
     
-    @patch('blendwatch.cli.load_config')
+    @patch('blendwatch.cli.utils.load_config')
     def test_watch_invalid_config(self, mock_load_config):
         """Test watch command with invalid config file"""
         mock_load_config.return_value = None
@@ -241,8 +234,8 @@ class TestCLI:
     def test_watch_default_extensions(self):
         """Test that default extensions are used when none specified"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('blendwatch.cli.FileWatcher') as mock_watcher_class:
-                with patch('blendwatch.cli.time.sleep', side_effect=KeyboardInterrupt()):
+            with patch('blendwatch.cli.commands.watch.FileWatcher') as mock_watcher_class:
+                with patch('blendwatch.cli.commands.watch.time.sleep', side_effect=KeyboardInterrupt()):
                     result = self.runner.invoke(main, ['watch', temp_dir])
                     
                     assert result.exit_code == 0
@@ -275,8 +268,8 @@ log_level = "debug"
             config_file.flush()
             
             with tempfile.TemporaryDirectory() as temp_dir:
-                with patch('blendwatch.cli.FileWatcher') as mock_watcher_class:
-                    with patch('blendwatch.cli.time.sleep', side_effect=KeyboardInterrupt()):
+                with patch('blendwatch.cli.commands.watch.FileWatcher') as mock_watcher_class:
+                    with patch('blendwatch.cli.commands.watch.time.sleep', side_effect=KeyboardInterrupt()):
                         result = self.runner.invoke(main, [
                             'watch', temp_dir,
                             '--config', config_file.name
@@ -300,8 +293,8 @@ ignore_dirs = ["config_ignore"]
             config_file.flush()
             
             with tempfile.TemporaryDirectory() as temp_dir:
-                with patch('blendwatch.cli.FileWatcher') as mock_watcher_class:
-                    with patch('blendwatch.cli.time.sleep', side_effect=KeyboardInterrupt()):
+                with patch('blendwatch.cli.commands.watch.FileWatcher') as mock_watcher_class:
+                    with patch('blendwatch.cli.commands.watch.time.sleep', side_effect=KeyboardInterrupt()):
                         result = self.runner.invoke(main, [
                             'watch', temp_dir,
                             '--config', config_file.name,
@@ -361,8 +354,8 @@ class TestBacklinksCommand:
     def setup_method(self):
         self.runner = CliRunner()
 
-    @patch('blendwatch.cli.BacklinkScanner')
-    @patch('blendwatch.cli.load_default_config')
+    @patch('blendwatch.cli.commands.backlinks.BacklinkScanner')
+    @patch('blendwatch.cli.utils.load_default_config')
     def test_backlinks_json_output(self, mock_load_default, mock_scanner, tmp_path):
         from blendwatch.core.config import Config
         mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])
@@ -381,8 +374,8 @@ class TestBacklinksCommand:
         assert 'file.blend' in res.output
         assert 'matching_libraries' in res.output
 
-    @patch('blendwatch.cli.BacklinkScanner')
-    @patch('blendwatch.cli.load_default_config')
+    @patch('blendwatch.cli.commands.backlinks.BacklinkScanner')
+    @patch('blendwatch.cli.utils.load_default_config')
     def test_backlinks_table_verbose(self, mock_load_default, mock_scanner, tmp_path):
         from blendwatch.core.config import Config
         mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])

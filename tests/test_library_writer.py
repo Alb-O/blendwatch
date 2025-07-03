@@ -191,7 +191,7 @@ class TestLibraryPathWriterMocked:
         if self.temp_dir.exists():
             shutil.rmtree(self.temp_dir)
     
-    @patch('blendwatch.library_writer.blendfile.BlendFile')
+    @patch('blendwatch.blender.library_writer.blendfile.BlendFile')
     def test_get_library_paths_empty(self, mock_blendfile):
         """Test getting library paths from file with no libraries"""
         # Mock blend file with no LI blocks
@@ -205,7 +205,7 @@ class TestLibraryPathWriterMocked:
         assert paths == {}
         mock_blendfile.assert_called_once_with(self.test_blend_file, mode="rb")
     
-    @patch('blendwatch.library_writer.blendfile.BlendFile')
+    @patch('blendwatch.blender.library_writer.blendfile.BlendFile')
     def test_get_library_paths_with_unicode_error(self, mock_blendfile):
         """Test getting library paths handles unicode decode errors"""
         # Mock library block with invalid UTF-8
@@ -228,7 +228,7 @@ class TestLibraryPathWriterMocked:
         # The exact replacement characters may vary, but it should contain something
         assert any("lib.blend" in key for key in paths.keys())
     
-    @patch('blendwatch.library_writer.blendfile.BlendFile')
+    @patch('blendwatch.blender.library_writer.blendfile.BlendFile')
     def test_update_library_path_not_found(self, mock_blendfile):
         """Test library path update when path not found"""
         # Mock library block with different path

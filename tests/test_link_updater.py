@@ -26,8 +26,8 @@ def test_parse_move_log_missing(tmp_path):
         parse_move_log(tmp_path / 'missing.log')
 
 
-@patch('blendwatch.link_updater.LibraryPathWriter')
-@patch('blendwatch.link_updater.BacklinkScanner')
+@patch('blendwatch.blender.link_updater.LibraryPathWriter')
+@patch('blendwatch.blender.link_updater.BacklinkScanner')
 def test_apply_move_log_dry_run_verbose(mock_scanner_cls, mock_writer_cls, tmp_path, capsys):
     log_file = tmp_path / 'log.jsonl'
     log_file.write_text(json.dumps({'type': 'file_moved', 'old_path': 'old', 'new_path': 'new'}) + "\n")
@@ -44,8 +44,8 @@ def test_apply_move_log_dry_run_verbose(mock_scanner_cls, mock_writer_cls, tmp_p
     assert 'Would update file.blend -> new' in out
 
 
-@patch('blendwatch.link_updater.LibraryPathWriter')
-@patch('blendwatch.link_updater.BacklinkScanner')
+@patch('blendwatch.blender.link_updater.LibraryPathWriter')
+@patch('blendwatch.blender.link_updater.BacklinkScanner')
 def test_apply_move_log_updates(mock_scanner_cls, mock_writer_cls, tmp_path):
     log_file = tmp_path / 'log.jsonl'
     log_file.write_text(json.dumps({'type': 'file_moved', 'old_path': 'old', 'new_path': 'new'}) + "\n")
@@ -60,8 +60,8 @@ def test_apply_move_log_updates(mock_scanner_cls, mock_writer_cls, tmp_path):
     mock_writer.update_library_path.assert_called_with('old', 'new')
 
 
-@patch('blendwatch.link_updater.LibraryPathWriter')
-@patch('blendwatch.link_updater.BacklinkScanner')
+@patch('blendwatch.blender.link_updater.LibraryPathWriter')
+@patch('blendwatch.blender.link_updater.BacklinkScanner')
 def test_apply_move_log_no_moves(mock_scanner_cls, mock_writer_cls, tmp_path):
     log_file = tmp_path / 'log.jsonl'
     log_file.write_text('')
