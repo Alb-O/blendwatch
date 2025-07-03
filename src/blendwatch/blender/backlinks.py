@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from blendwatch.blender.library_writer import LibraryPathWriter
+from blendwatch.blender.cache import BlendFileCache
 from blendwatch.core.config import Config, load_default_config
 from blendwatch.utils.path_utils import resolve_path, is_path_ignored, find_files_by_extension
 
@@ -51,6 +52,14 @@ class BacklinkScanner:
                 self.ignore_patterns.append(re.compile(pattern))
             except re.error as e:
                 log.warning(f"Invalid ignore pattern '{pattern}': {e}")
+        
+        # Initialize high-performance cache
+        self.cache = BlendFileCache()
+        
+        # Cache the blend file list to avoid repeated directory scanning
+        self._blend_files_cache: Optional[List[Path]] = None
+        self._blend_files_cache_time: float = 0
+        self._cache_timeout: float = 300  # 5 minutes
     
     def _should_ignore_directory(self, directory: Path) -> bool:
         """Check if a directory should be ignored based on config patterns.
@@ -63,12 +72,22 @@ class BacklinkScanner:
         """
         return is_path_ignored(directory, self.config.ignore_dirs)
     
-    def find_blend_files(self) -> List[Path]:
-        """Find all .blend files using the path utilities.
+    def find_blend_files(self, force_refresh: bool = False) -> List[Path]:
+        """Find all .blend files using the path utilities with caching.
+        
+        Args:
+            force_refresh: If True, ignore cache and re-scan directory
         
         Returns:
             List of paths to .blend files
         """
+        # Check if we can use cached results
+        current_time = time.time()
+        if (not force_refresh and 
+            self._blend_files_cache is not None and 
+            current_time - self._blend_files_cache_time < self._cache_timeout):
+            return self._blend_files_cache
+        
         start_time = time.time()
         
         # Use the utility function to find blend files
@@ -89,12 +108,16 @@ class BacklinkScanner:
             if not should_ignore:
                 filtered_files.append(blend_file)
         
+        # Cache the results
+        self._blend_files_cache = filtered_files
+        self._blend_files_cache_time = current_time
+        
         duration = time.time() - start_time
         log.info(f"Found {len(filtered_files)} blend files in {duration:.2f}s")
         return filtered_files
     
     def _check_blend_file_for_target(self, blend_file: Path, target_asset: Path) -> Optional[BacklinkResult]:
-        """Check if a blend file links to the target asset.
+        """Check if a blend file links to the target asset using cache.
         
         Args:
             blend_file: Path to the blend file to check
@@ -104,8 +127,10 @@ class BacklinkScanner:
             BacklinkResult if the blend file links to the target, None otherwise
         """
         try:
-            writer = LibraryPathWriter(blend_file)
-            library_paths = writer.get_library_paths()
+            # Use cache to get library paths
+            library_paths = self.cache.get_library_paths(blend_file)
+            if library_paths is None:
+                return None
             
             # Look for matches in library paths
             matching_libraries = []
@@ -148,7 +173,7 @@ class BacklinkScanner:
         
         start_time = time.time()
         
-        # Find all blend files
+        # Find all blend files (cached)
         blend_files = self.find_blend_files()
         
         # Filter out the target file itself if it's a blend file
@@ -157,26 +182,57 @@ class BacklinkScanner:
         
         log.info(f"Checking {len(blend_files)} blend files for backlinks to {target_asset.name}")
         
-        # Check files in parallel
+        # Use the cache's optimized bulk operation
+        linking_files = self.cache.get_files_linking_to(str(target_asset), blend_files)
+        
+        # Convert to BacklinkResult objects
         backlinks = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_file = {
-                executor.submit(self._check_blend_file_for_target, blend_file, target_asset): blend_file
-                for blend_file in blend_files
-            }
+        for blend_file in linking_files:
+            library_paths = self.cache.get_library_paths(blend_file)
+            if library_paths is None:
+                continue
             
-            # Collect results
-            for future in as_completed(future_to_file):
-                result = future.result()
-                if result is not None:
-                    backlinks.append(result)
+            # Find which libraries match
+            matching_libraries = []
+            target_name = target_asset.name
+            target_str = str(target_asset)
+            
+            for lib_name, lib_path in library_paths.items():
+                if (target_name in lib_path or 
+                    target_str in lib_path or
+                    str(target_asset) == lib_path):
+                    matching_libraries.append(lib_name)
+            
+            if matching_libraries:
+                backlinks.append(BacklinkResult(
+                    blend_file=blend_file,
+                    library_paths=library_paths,
+                    matching_libraries=matching_libraries
+                ))
         
         duration = time.time() - start_time
-        log.info(f"Found {len(backlinks)} backlinks in {duration:.2f}s")
+        
+        # Log cache performance
+        stats = self.cache.get_stats()
+        log.info(f"Found {len(backlinks)} backlinks in {duration:.2f}s "
+                f"(cache hit rate: {stats['hit_rate_percent']}%)")
         
         return backlinks
     
+    def save_cache(self):
+        """Save the cache to disk for future use."""
+        self.cache.save()
+    
+    def get_cache_stats(self) -> Dict[str, Union[int, float]]:
+        """Get cache performance statistics."""
+        return self.cache.get_stats()
+    
+    def clear_cache(self):
+        """Clear all cached data."""
+        self.cache.clear()
+        self._blend_files_cache = None
+        self._blend_files_cache_time = 0
+
     def find_backlinks_to_multiple_files(self, target_assets: Sequence[Union[str, Path]], 
                                        max_workers: int = 4) -> Dict[Path, List[BacklinkResult]]:
         """Find backlinks for multiple target assets.

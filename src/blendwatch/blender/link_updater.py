@@ -130,8 +130,21 @@ def apply_move_log_incremental(
                         total_updates += 1
                         if verbose:
                             print(f"Updated {result.blend_file} -> {new_path}")
+                        
+                        # Invalidate cache for modified file
+                        scanner.cache.invalidate_file(result.blend_file)
+                            
                 except Exception as e:
                     log.warning(f"Could not update {result.blend_file}: {e}")
+
+    # Save cache for next time
+    scanner.save_cache()
+    
+    # Log performance stats
+    stats = scanner.get_cache_stats()
+    if verbose:
+        print(f"Cache performance: {stats['cache_hits']} hits, {stats['cache_misses']} misses "
+              f"({stats['hit_rate_percent']}% hit rate)")
 
     return total_updates, new_position
 
