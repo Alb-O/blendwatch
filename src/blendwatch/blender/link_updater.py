@@ -14,7 +14,6 @@ log = logging.getLogger(__name__)
 
 Move = Tuple[str, str]
 
-
 def parse_move_log(log_file: Union[str, Path], start_position: int = 0) -> Tuple[List[Move], int]:
     """Parse a BlendWatch log file and return file move operations.
     
@@ -67,6 +66,7 @@ def apply_move_log_incremental(
     *,
     dry_run: bool = False,
     verbose: bool = False,
+    relative: bool = False,
 ) -> Tuple[int, int]:
     """Update library paths for move operations from a specific position in the log.
 
@@ -82,6 +82,8 @@ def apply_move_log_incremental(
         If True, do not modify any files but report what would change.
     verbose:
         Print information about every update performed.
+    relative:
+        If True, write library paths in relative format (default: False).
 
     Returns
     -------
@@ -92,32 +94,44 @@ def apply_move_log_incremental(
     if not moves:
         return 0, new_position
 
+    # Optimize by collecting unique old paths to avoid redundant backlink searches
+    move_map = {}  # old_path -> list of new_paths
+    for old_path, new_path in moves:
+        if old_path not in move_map:
+            move_map[old_path] = []
+        move_map[old_path].append(new_path)
+
     scanner = BacklinkScanner(search_directory)
     total_updates = 0
 
-    for old_path, new_path in moves:
+    # Process each unique old path once
+    for old_path, new_paths in move_map.items():
         if verbose:
-            print(f"Processing move: {old_path} -> {new_path}")
+            print(f"Processing moves for: {old_path} -> {new_paths}")
         
+        # Find backlinks once for this old path
         results = scanner.find_backlinks_to_file(old_path)
-        for result in results:
-            try:
-                writer = LibraryPathWriter(result.blend_file)
-                if dry_run:
-                    current = writer.get_library_paths()
-                    if old_path in current.values():
+        
+        # Apply updates for each new path (in case there are multiple renames)
+        for new_path in new_paths:
+            for result in results:
+                try:
+                    writer = LibraryPathWriter(result.blend_file)
+                    if dry_run:
+                        current = writer.get_library_paths()
+                        if old_path in current.values():
+                            total_updates += 1
+                            if verbose:
+                                print(f"Would update {result.blend_file} -> {new_path}")
+                        continue
+
+                    updated = writer.update_library_path(old_path, new_path, relative=relative)
+                    if updated:
                         total_updates += 1
                         if verbose:
-                            print(f"Would update {result.blend_file} -> {new_path}")
-                    continue
-
-                updated = writer.update_library_path(old_path, new_path)
-                if updated:
-                    total_updates += 1
-                    if verbose:
-                        print(f"Updated {result.blend_file} -> {new_path}")
-            except Exception as e:
-                log.warning(f"Could not update {result.blend_file}: {e}")
+                            print(f"Updated {result.blend_file} -> {new_path}")
+                except Exception as e:
+                    log.warning(f"Could not update {result.blend_file}: {e}")
 
     return total_updates, new_position
 
@@ -128,6 +142,7 @@ def apply_move_log(
     *,
     dry_run: bool = False,
     verbose: bool = False,
+    relative: bool = False,
 ) -> int:
     """Update library paths for all move operations recorded in ``log_file``.
 
@@ -141,6 +156,8 @@ def apply_move_log(
         If True, do not modify any files but report what would change.
     verbose:
         Print information about every update performed.
+    relative:
+        If True, write library paths in relative format (default: False).
 
     Returns
     -------
@@ -167,7 +184,7 @@ def apply_move_log(
                             print(f"Would update {result.blend_file} -> {new_path}")
                     continue
 
-                updated = writer.update_library_path(old_path, new_path)
+                updated = writer.update_library_path(old_path, new_path, relative=relative)
                 if updated:
                     total_updates += 1
                     if verbose:

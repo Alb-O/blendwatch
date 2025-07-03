@@ -70,23 +70,25 @@ class LibraryPathWriter:
         
         return library_paths
     
-    def update_library_path(self, old_path: str, new_path: str) -> bool:
+    def update_library_path(self, old_path: str, new_path: str, relative: bool = False) -> bool:
         """Update a single library path.
         
         Args:
             old_path: The current library path to replace
             new_path: The new library path
+            relative: If True, convert absolute paths to relative format (default: False)
             
         Returns:
             True if the path was found and updated, False otherwise
         """
-        return self.update_library_paths({old_path: new_path}) > 0
+        return self.update_library_paths({old_path: new_path}, relative=relative) > 0
     
-    def update_library_paths(self, path_mapping: Dict[str, str]) -> int:
+    def update_library_paths(self, path_mapping: Dict[str, str], relative: bool = False) -> int:
         """Update multiple library paths.
         
         Args:
             path_mapping: Dictionary mapping old paths to new paths
+            relative: If True, convert absolute paths to relative format (default: False)
             
         Returns:
             Number of library paths that were updated
@@ -162,6 +164,23 @@ class LibraryPathWriter:
                             new_path = path_mapping[str(resolved_path)]
                     
                     if new_path is not None:
+                        # Convert path based on relative parameter
+                        if relative:
+                            # Convert new path to relative format
+                            try:
+                                new_path_obj = resolve_path(new_path)
+                                blend_dir = self.blend_file_path.parent
+                                relative_path = get_relative_path(new_path_obj, blend_dir)
+                                if relative_path is not None:
+                                    # Use Blender's relative path format
+                                    new_path = '//' + str(relative_path).replace('\\', '/')
+                                else:
+                                    # If can't make relative, use absolute path
+                                    new_path = str(new_path_obj)
+                            except (ValueError, OSError):
+                                # If path resolution fails, use original path
+                                pass
+                        
                         # Convert new path to bytes with null termination
                         new_path_bytes = new_path.encode('utf-8') + b'\x00'
                         
@@ -314,18 +333,20 @@ class LibraryPathWriter:
 
 
 def update_blend_file_paths(blend_file: Union[str, Path], 
-                          path_mapping: Dict[str, str]) -> int:
+                          path_mapping: Dict[str, str], 
+                          relative: bool = False) -> int:
     """Convenience function to update library paths in a blend file.
     
     Args:
         blend_file: Path to the .blend file
         path_mapping: Dictionary mapping old paths to new paths
+        relative: If True, convert absolute paths to relative format (default: False)
         
     Returns:
         Number of library paths that were updated
     """
     writer = LibraryPathWriter(blend_file)
-    return writer.update_library_paths(path_mapping)
+    return writer.update_library_paths(path_mapping, relative=relative)
 
 
 def get_blend_file_libraries(blend_file: Union[str, Path]) -> Dict[str, str]:

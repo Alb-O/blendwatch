@@ -17,7 +17,8 @@ from blendwatch.cli.utils import check_file_exists, check_directory_exists, sugg
 @click.argument('search_directory', type=click.Path(), default='.', required=False)
 @click.option('--dry-run', is_flag=True, help='Show changes without modifying files')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def update_links_command(log_file: str, search_directory: str, dry_run: bool, verbose: bool):
+@click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
+def update_links_command(log_file: str, search_directory: str, dry_run: bool, verbose: bool, relative: bool):
     """Update linked library paths based on a move log.
     
     LOG_FILE: Path to the move log file (default: blendwatch.log)
@@ -43,7 +44,7 @@ def update_links_command(log_file: str, search_directory: str, dry_run: bool, ve
             click.echo(f"{Fore.CYAN}Updating links from log: {log_path}{Style.RESET_ALL}")
             click.echo(f"{Fore.CYAN}Searching in directory: {search_path}{Style.RESET_ALL}")
         
-        updated = apply_move_log(str(log_path), str(search_path), dry_run=dry_run, verbose=verbose)
+        updated = apply_move_log(str(log_path), str(search_path), dry_run=dry_run, verbose=verbose, relative=relative)
         if dry_run:
             click.echo(f"{Fore.CYAN}Would update {updated} library paths{Style.RESET_ALL}")
         else:
@@ -58,6 +59,7 @@ def update_links_command(log_file: str, search_directory: str, dry_run: bool, ve
 @click.argument('search_directory', type=click.Path(), default='.', required=False)
 @click.option('--dry-run', is_flag=True, help='Show changes without modifying files')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
 @click.pass_context
 def update_alias(ctx, **kwargs):
     """Alias for 'update-links' command."""

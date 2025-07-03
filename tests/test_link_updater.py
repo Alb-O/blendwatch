@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from blendwatch.blender.link_updater import parse_move_log, apply_move_log
+from blendwatch.blender.link_updater import parse_move_log, parse_move_log_simple, apply_move_log
 
 
 def test_parse_move_log_valid_and_invalid(tmp_path):
@@ -17,13 +17,13 @@ def test_parse_move_log_valid_and_invalid(tmp_path):
         json.dumps({"type": "file_renamed", "old_path": "o2", "new_path": "n2"}),
     ]
     log_file.write_text("\n".join(lines))
-    moves = parse_move_log(log_file)
+    moves = parse_move_log_simple(log_file)
     assert moves == [("o", "n"), ("o2", "n2")]
 
 
 def test_parse_move_log_missing(tmp_path):
     with pytest.raises(FileNotFoundError):
-        parse_move_log(tmp_path / 'missing.log')
+        parse_move_log_simple(tmp_path / 'missing.log')
 
 
 @patch('blendwatch.blender.link_updater.LibraryPathWriter')
@@ -57,7 +57,7 @@ def test_apply_move_log_updates(mock_scanner_cls, mock_writer_cls, tmp_path):
 
     count = apply_move_log(log_file, tmp_path)
     assert count == 1
-    mock_writer.update_library_path.assert_called_with('old', 'new')
+    mock_writer.update_library_path.assert_called_with('old', 'new', relative=False)
 
 
 @patch('blendwatch.blender.link_updater.LibraryPathWriter')
@@ -69,3 +69,37 @@ def test_apply_move_log_no_moves(mock_scanner_cls, mock_writer_cls, tmp_path):
     assert count == 0
     mock_scanner_cls.assert_not_called()
     mock_writer_cls.assert_not_called()
+
+
+@patch('blendwatch.blender.link_updater.LibraryPathWriter')
+@patch('blendwatch.blender.link_updater.BacklinkScanner')
+def test_apply_move_log_with_relative_option(mock_scanner_cls, mock_writer_cls, tmp_path):
+    """Test apply_move_log with relative=True option"""
+    log_file = tmp_path / 'log.jsonl'
+    log_file.write_text(json.dumps({'type': 'file_moved', 'old_path': 'old', 'new_path': 'new'}) + "\n")
+
+    mock_scanner = mock_scanner_cls.return_value
+    mock_scanner.find_backlinks_to_file.return_value = [SimpleNamespace(blend_file='file.blend')]
+    mock_writer = mock_writer_cls.return_value
+    mock_writer.update_library_path.return_value = True
+
+    count = apply_move_log(log_file, tmp_path, relative=True)
+    assert count == 1
+    mock_writer.update_library_path.assert_called_with('old', 'new', relative=True)
+
+
+@patch('blendwatch.blender.link_updater.LibraryPathWriter')
+@patch('blendwatch.blender.link_updater.BacklinkScanner')
+def test_apply_move_log_with_relative_false(mock_scanner_cls, mock_writer_cls, tmp_path):
+    """Test apply_move_log with relative=False (default)"""
+    log_file = tmp_path / 'log.jsonl'
+    log_file.write_text(json.dumps({'type': 'file_moved', 'old_path': 'old', 'new_path': 'new'}) + "\n")
+
+    mock_scanner = mock_scanner_cls.return_value
+    mock_scanner.find_backlinks_to_file.return_value = [SimpleNamespace(blend_file='file.blend')]
+    mock_writer = mock_writer_cls.return_value
+    mock_writer.update_library_path.return_value = True
+
+    count = apply_move_log(log_file, tmp_path, relative=False)
+    assert count == 1
+    mock_writer.update_library_path.assert_called_with('old', 'new', relative=False)

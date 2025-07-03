@@ -174,6 +174,105 @@ class TestLibraryPathWriterReal:
         assert isinstance(absolute_count, int)
         assert relative_count >= 0
         assert absolute_count >= 0
+    
+    def test_update_library_path_with_relative_option(self):
+        """Test updating library paths with relative=True option"""
+        # Copy the blend file to temp directory
+        test_file = self.temp_dir / "test_relative_update.blend"
+        shutil.copy2(self.linked_cube, test_file)
+        
+        writer = LibraryPathWriter(test_file)
+        original_paths = writer.get_library_paths()
+        
+        if not original_paths:
+            pytest.skip("No libraries found in test file")
+        
+        # Create a subdirectory with a mock library file
+        lib_dir = self.temp_dir / "libraries"
+        lib_dir.mkdir()
+        lib_file = lib_dir / "test_lib.blend"
+        lib_file.touch()  # Create empty file
+        
+        # Get the first library path to update
+        old_path = list(original_paths.values())[0]
+        new_path = str(lib_file)  # Absolute path
+        
+        # Update with relative=True
+        result = writer.update_library_path(old_path, new_path, relative=True)
+        
+        if result:
+            updated_paths = writer.get_library_paths()
+            
+            # Check that the path was converted to relative format
+            expected_relative = "//libraries/test_lib.blend"
+            assert expected_relative in updated_paths.values(), f"Expected {expected_relative} in {updated_paths.values()}"
+    
+    def test_update_library_paths_with_relative_option(self):
+        """Test updating multiple library paths with relative=True option"""
+        # Copy the blend file to temp directory
+        test_file = self.temp_dir / "test_relative_multiple.blend"
+        shutil.copy2(self.doubly_linked, test_file)
+        
+        writer = LibraryPathWriter(test_file)
+        original_paths = writer.get_library_paths()
+        
+        if len(original_paths) < 1:
+            pytest.skip("Need at least 1 library for this test")
+        
+        # Create subdirectories with mock library files
+        lib_dir = self.temp_dir / "assets"
+        lib_dir.mkdir()
+        lib_file1 = lib_dir / "material1.blend"
+        lib_file2 = lib_dir / "material2.blend"
+        lib_file1.touch()
+        lib_file2.touch()
+        
+        # Create mapping with absolute paths
+        old_paths = list(original_paths.values())
+        path_mapping = {
+            old_paths[0]: str(lib_file1),
+        }
+        if len(old_paths) > 1:
+            path_mapping[old_paths[1]] = str(lib_file2)
+        
+        # Update with relative=True
+        result = writer.update_library_paths(path_mapping, relative=True)
+        
+        if result > 0:
+            updated_paths = writer.get_library_paths()
+            
+            # Check that paths were converted to relative format
+            expected_relative1 = "//assets/material1.blend"
+            assert expected_relative1 in updated_paths.values(), f"Expected {expected_relative1} in {updated_paths.values()}"
+    
+    def test_update_library_path_with_relative_false(self):
+        """Test updating library paths with relative=False (default behavior)"""
+        # Copy the blend file to temp directory
+        test_file = self.temp_dir / "test_absolute_update.blend"
+        shutil.copy2(self.linked_cube, test_file)
+        
+        writer = LibraryPathWriter(test_file)
+        original_paths = writer.get_library_paths()
+        
+        if not original_paths:
+            pytest.skip("No libraries found in test file")
+        
+        # Create a mock library file
+        lib_file = self.temp_dir / "absolute_lib.blend"
+        lib_file.touch()
+        
+        # Get the first library path to update
+        old_path = list(original_paths.values())[0]
+        new_path = str(lib_file)  # Absolute path
+        
+        # Update with relative=False (default)
+        result = writer.update_library_path(old_path, new_path, relative=False)
+        
+        if result:
+            updated_paths = writer.get_library_paths()
+            
+            # Check that the path remains absolute
+            assert str(lib_file) in updated_paths.values(), f"Expected {str(lib_file)} in {updated_paths.values()}"
 
 
 class TestLibraryPathWriterMocked:

@@ -23,8 +23,9 @@ from blendwatch.cli.utils import load_config_with_fallback, handle_cli_exception
               help='Path to configuration file (TOML or JSON)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
+@click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
 def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[str], 
-                 verbose: bool, dry_run: bool):
+                 verbose: bool, dry_run: bool, relative: bool):
     """Watch for file changes and automatically update blend file links.
     
     WATCH_PATH: Directory to watch (default: current directory)
@@ -85,7 +86,7 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
                         updated, new_position = apply_move_log_incremental(
                             str(log_file), str(update_directory), 
                             start_position=last_processed_position,
-                            dry_run=dry_run, verbose=verbose
+                            dry_run=dry_run, verbose=verbose, relative=relative
                         )
                         if updated > 0:
                             if dry_run:
@@ -120,6 +121,7 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
               help='Path to configuration file (TOML or JSON)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
+@click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
 @click.pass_context
 def auto_alias(ctx, **kwargs):
     """Alias for 'sync' command."""
