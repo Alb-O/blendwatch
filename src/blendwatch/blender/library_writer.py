@@ -6,10 +6,13 @@ without opening them in Blender, using the blender-asset-tracer library.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from blender_asset_tracer import blendfile
 from blendwatch.utils.path_utils import resolve_path, get_relative_path
+# Import the new block-level optimizations
+from .block_level_optimizations import get_libraries_ultra_fast, FastLibraryReader, batch_scan_libraries
 
 log = logging.getLogger(__name__)
 
@@ -378,9 +381,9 @@ def get_blend_file_libraries(blend_file: Union[str, Path]) -> Dict[str, str]:
 
 
 def get_blend_file_libraries_fast(blend_file: Union[str, Path]) -> Dict[str, str]:
-    """Fast convenience function to get all library paths from a blend file using caching.
+    """Fast convenience function to get all library paths from a blend file.
     
-    This version uses the blender-asset-tracer's caching system for better performance.
+    This version uses block-level I/O optimizations for better performance.
     
     Args:
         blend_file: Path to the .blend file
@@ -388,36 +391,7 @@ def get_blend_file_libraries_fast(blend_file: Union[str, Path]) -> Dict[str, str
     Returns:
         Dictionary mapping library names to their file paths
     """
-    blend_path = resolve_path(str(blend_file))
-    library_paths = {}
-    
-    # Use cached access for maximum performance
-    with blendfile.open_cached(blend_path, mode="rb") as bf:
-        # Get all library blocks (LI = Library) efficiently using the code index
-        libraries = bf.code_index.get(b"LI", [])
-        
-        for library in libraries:
-            try:
-                name = library[b"name"]
-                # Try filepath first, fall back to name if filepath doesn't exist
-                try:
-                    filepath = library[b"filepath"]
-                except KeyError:
-                    # In newer Blender versions, the library path might be stored in the name field
-                    filepath = library[b"name"]
-                
-                # Convert bytes to string if needed
-                if isinstance(name, bytes):
-                    name = name.decode('utf-8', errors='replace').rstrip('\x00')
-                if isinstance(filepath, bytes):
-                    filepath = filepath.decode('utf-8', errors='replace').rstrip('\x00')
-                
-                library_paths[name] = filepath
-            except (KeyError, UnicodeDecodeError) as e:
-                log.warning(f"Could not read library info from {blend_file}: {e}")
-                continue
-    
-    return library_paths
+    return get_libraries_ultra_fast(blend_file)
 
 
 def update_blend_file_paths_fast(blend_file: Union[str, Path], 
@@ -455,3 +429,52 @@ def update_blend_file_paths_fast(blend_file: Union[str, Path],
     # Only create writer if updates are actually needed
     writer = LibraryPathWriter(blend_file)
     return writer.update_library_paths(path_mapping, relative=relative)
+
+
+def get_blend_file_libraries_ultra_fast(blend_file: Union[str, Path]) -> Dict[str, str]:
+    """DEPRECATED: Use get_blend_file_libraries_fast instead.
+    
+    Ultra-fast convenience function using advanced block-level optimizations.
+    
+    This version uses the most advanced block-level I/O optimizations available,
+    including minimal field reading, selective block access, and intelligent caching.
+    
+    Args:
+        blend_file: Path to the .blend file
+        
+    Returns:
+        Dictionary mapping library names to their file paths
+    """
+    import warnings
+    warnings.warn(
+        "get_blend_file_libraries_ultra_fast is deprecated, use get_blend_file_libraries_fast instead",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return get_libraries_ultra_fast(blend_file)
+
+
+def update_blend_file_paths_with_precheck(blend_file: Union[str, Path], 
+                                         path_mapping: Dict[str, str], 
+                                         relative: bool = False) -> int:
+    """Ultra-fast update function with intelligent pre-checking.
+    
+    This version uses block-level optimizations to first check if the file
+    even has libraries before attempting any updates.
+    
+    Args:
+        blend_file: Path to the .blend file
+        path_mapping: Dictionary mapping old paths to new paths
+        relative: If True, convert absolute paths to relative format (default: False)
+        
+    Returns:
+        Number of library paths that were updated
+    """
+    from .block_level_optimizations import SelectiveBlockReader
+    
+    # Fast pre-check: does this file even have libraries?
+    if not SelectiveBlockReader.has_libraries(Path(blend_file)):
+        return 0
+    
+    # Use the existing fast update function
+    return update_blend_file_paths_fast(blend_file, path_mapping, relative=relative)
