@@ -16,7 +16,7 @@ from blendwatch.blender.block_level_optimizations import (
     get_libraries_ultra_fast,
     batch_scan_libraries,
 )
-from blendwatch.blender.library_writer import get_blend_file_libraries_fast
+from blendwatch.blender.library_writer import get_blend_file_libraries
 
 
 class TestBlockLevelOptimizations:
@@ -116,7 +116,7 @@ class TestBlockLevelOptimizations:
         
         # Test standard method
         start_time = time.time()
-        standard_result = get_blend_file_libraries_fast(test_file)
+        standard_result = get_blend_file_libraries(test_file)
         standard_time = time.time() - start_time
         
         # Test ultra-fast method
@@ -146,7 +146,7 @@ class TestBlockLevelOptimizations:
         individual_results = {}
         for file_path in test_files:
             try:
-                libraries = get_blend_file_libraries_fast(file_path)
+                libraries = get_blend_file_libraries(file_path)
                 if libraries:
                     individual_results[file_path] = libraries
             except Exception:

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from blendwatch.blender.library_writer import LibraryPathWriter, get_blend_file_libraries_fast
+from blendwatch.blender.library_writer import LibraryPathWriter, get_blend_file_libraries
 # Import block-level optimizations for enhanced performance
 from blendwatch.blender.block_level_optimizations import SelectiveBlockReader, batch_scan_libraries
 from blendwatch.blender.cache import BlendFileCache

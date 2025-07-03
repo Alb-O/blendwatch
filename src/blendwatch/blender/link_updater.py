@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple, Union
 
 from blendwatch.blender.backlinks import BacklinkScanner
-from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths_fast, update_blend_file_paths_with_precheck
+from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths
 
 log = logging.getLogger(__name__)
 
@@ -125,8 +125,8 @@ def apply_move_log_incremental(
                                 print(f"Would update {result.blend_file} -> {new_path}")
                         continue
 
-                    # Use ultra-fast update function with pre-checking
-                    updated = update_blend_file_paths_with_precheck(
+                    # Use optimized update function
+                    updated = update_blend_file_paths(
                         result.blend_file, 
                         {old_path: new_path}, 
                         relative=relative

@@ -82,8 +82,11 @@ class FastLibraryReader:
                             name_str = self._bytes_to_string(name)
                             filepath_str = self._bytes_to_string(filepath)
 
-                            # Patch: Normalize Windows-style/mixed paths before resolving
-                            filepath_str = os.path.normpath(filepath_str)
+                            # Don't normalize Blender relative paths (starting with //)
+                            # as os.path.normpath would incorrectly convert them
+                            if not filepath_str.startswith("//"):
+                                # Only normalize non-Blender paths
+                                filepath_str = os.path.normpath(filepath_str)
 
                             # Resolve the path efficiently
                             resolved_path = self._resolve_library_path(filepath_str)

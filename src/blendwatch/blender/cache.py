@@ -139,8 +139,8 @@ class BlendFileCache:
         
         try:
             # Use the ultra-fast library reader for better performance
-            from blendwatch.blender.library_writer import get_blend_file_libraries_fast
-            library_paths = get_blend_file_libraries_fast(blend_file)
+            from blendwatch.blender.library_writer import get_blend_file_libraries
+            library_paths = get_blend_file_libraries(blend_file)
             
             # Update cache
             mtime, size = self._get_file_info(blend_file)
