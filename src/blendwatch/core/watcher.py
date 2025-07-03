@@ -103,6 +103,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
         self.pending_creates: Dict[str, Dict] = {}  # path -> event_data
         self.correlation_lock = threading.Lock()
         
+        # Track recent directory moves to avoid double-reporting file moves
+        self.recent_directory_moves: Dict[str, str] = {}  # old_dir -> new_dir
+        
         # Open output file if specified
         self.output_fp = None
         if self.output_file:
@@ -149,13 +152,23 @@ class MoveTrackingHandler(FileSystemEventHandler):
         # Console output
         timestamp = event_data['timestamp']
         event_type = event_data['type']
-        old_path = event_data['old_path']
-        new_path = event_data['new_path']
         
-        if self.verbose:
-            print(f"[{timestamp}] {event_type.upper()}: {old_path} -> {new_path}")
+        # Check if this is a move event with old_path and new_path
+        if 'old_path' in event_data and 'new_path' in event_data:
+            old_path = event_data['old_path']
+            new_path = event_data['new_path']
+            
+            if self.verbose:
+                print(f"[{timestamp}] {event_type.upper()}: {old_path} -> {new_path}")
+            else:
+                print(f"{event_type.upper()}: {Path(old_path).name} -> {Path(new_path).name}")
         else:
-            print(f"{event_type.upper()}: {Path(old_path).name} -> {Path(new_path).name}")
+            # Handle non-move events (standalone creates/deletes)
+            path = event_data.get('path', 'unknown')
+            if self.verbose:
+                print(f"[{timestamp}] {event_type.upper()}: {path}")
+            else:
+                print(f"{event_type.upper()}: {Path(path).name}")
         
         # File output
         if self.output_fp:
@@ -175,6 +188,12 @@ class MoveTrackingHandler(FileSystemEventHandler):
         
         # Determine event type
         if isinstance(event, DirMovedEvent):
+            # Log the directory move itself first
+            if self.verbose:
+                print(f"[{datetime.now().isoformat()}] DIRECTORY_MOVED: {src_path} -> {dest_path}")
+            else:
+                print(f"DIRECTORY_MOVED: {Path(src_path).name} -> {Path(dest_path).name}")
+            
             # Directory move: find all relevant files and create individual move events
             moved_files = path_utils.find_files_by_extension(Path(dest_path), self.extensions, recursive=True)
             for new_file_path in moved_files:
@@ -194,6 +213,18 @@ class MoveTrackingHandler(FileSystemEventHandler):
                     'is_directory': False
                 }
                 self.log_event(file_event_data)
+            
+            # Track this directory move to avoid double-reporting later file moves
+            with self.correlation_lock:
+                self.recent_directory_moves[src_path] = dest_path
+                
+                # Clean up old directory moves (keep only recent ones)
+                if len(self.recent_directory_moves) > 10:
+                    # Remove oldest entries
+                    keys_to_remove = list(self.recent_directory_moves.keys())[:len(self.recent_directory_moves)//2]
+                    for old_dir in keys_to_remove:
+                        del self.recent_directory_moves[old_dir]
+            
             return
         elif isinstance(event, FileMovedEvent):
             # Check if file should be tracked
@@ -236,6 +267,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if not is_directory and not self.should_track_file(path):
             return
         
+        if self.verbose:
+            print(f"[DELETE EVENT] {path} (directory: {is_directory})")
+        
         # Clean expired events first
         self._clean_expired_events()
         
@@ -244,7 +278,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
             'timestamp': datetime.now().isoformat(),
             'path': path,
             'is_directory': is_directory,
-            'type': 'delete'
+            'type': 'file_deleted' if not is_directory else 'directory_deleted'
         }
         
         # Try to correlate with pending create events
@@ -263,6 +297,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if not is_directory and not self.should_track_file(path):
             return
         
+        if self.verbose:
+            print(f"[CREATE EVENT] {path} (directory: {is_directory})")
+        
         # Clean expired events first
         self._clean_expired_events()
         
@@ -271,7 +308,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
             'timestamp': datetime.now().isoformat(),
             'path': path,
             'is_directory': is_directory,
-            'type': 'create'
+            'type': 'file_created' if not is_directory else 'directory_created'
         }
         
         # Try to correlate with pending delete events
@@ -314,6 +351,13 @@ class MoveTrackingHandler(FileSystemEventHandler):
             ]
             for path in expired_creates:
                 del self.pending_creates[path]
+            
+            # Clean up recent directory moves if we have too many
+            if len(self.recent_directory_moves) > 20:
+                # Remove oldest entries (we don't have timestamps, so just remove half)
+                keys_to_remove = list(self.recent_directory_moves.keys())[:len(self.recent_directory_moves)//2]
+                for old_dir in keys_to_remove:
+                    del self.recent_directory_moves[old_dir]
     
     def _try_correlate_events(self, event_data: Dict, is_delete: bool) -> bool:
         """Try to correlate delete/create events into a move operation"""
@@ -322,56 +366,128 @@ class MoveTrackingHandler(FileSystemEventHandler):
             current_time = time.time()
             
             if is_delete:
-                # Look for matching create events
-                for create_path, create_data in list(self.pending_creates.items()):
-                    create_name, create_ext, create_size = self._get_file_info(create_path)
-                    
-                    # For correlation, we check:
-                    # 1. Same file extension (must match)
-                    # 2. Same filename (for moves between folders)
-                    # 3. Within timing window
-                    if (create_ext == file_ext and 
-                        create_name == file_name and  # Same filename = move between folders
-                        abs(current_time - create_data['timestamp_unix']) <= self.event_correlation_timeout):
-                        
-                        # Found a match! Create move event
-                        move_event = {
-                            'timestamp': event_data['timestamp'],
-                            'type': 'file_moved' if not event_data['is_directory'] else 'directory_moved',
-                            'old_path': event_data['path'],
-                            'new_path': create_path,
-                            'old_name': file_name,
-                            'new_name': create_name,
-                            'is_directory': event_data['is_directory'],
-                            'correlated': True
-                        }
-                        
-                        # Check if it's a rename (same parent) or move
-                        if Path(event_data['path']).parent == Path(create_path).parent:
-                            move_event['type'] = move_event['type'].replace('moved', 'renamed')
-                        
-                        # Remove the matched create event and log the move
-                        del self.pending_creates[create_path]
-                        self.log_event(move_event)
-                        return True
-            else:
-                # For delete events, we just store the event data with the current timestamp
+                # Store delete event for later correlation with create events
+                if self.verbose:
+                    print(f"[CORRELATION] Storing delete event for {event_data['path']}")
                 self.pending_deletes[event_data['path']] = {
                     **event_data,
                     'timestamp_unix': current_time
                 }
-        
-        return False
+                return False
+            else:
+                # This is a create event - look for matching delete events
+                if self.verbose:
+                    print(f"[CORRELATION] Looking for delete match for create event {event_data['path']}")
+                    print(f"[CORRELATION] Current pending deletes: {list(self.pending_deletes.keys())}")
+                
+                for delete_path, delete_data in list(self.pending_deletes.items()):
+                    delete_name, delete_ext, delete_size = self._get_file_info(delete_path)
+                    
+                    if self.verbose:
+                        print(f"[CORRELATION] Checking delete {delete_path}: name={delete_name}, ext={delete_ext}, size={delete_size}")
+                        print(f"[CORRELATION] Against create {event_data['path']}: name={file_name}, ext={file_ext}, size={file_size}")
+                    
+                    # For correlation, we check:
+                    # 1. Same file extension (must match)
+                    # 2. Within timing window (must be close in time)
+                    # 3. Same filename OR similar file size (to handle both renames and moves)
+                    time_diff = abs(current_time - delete_data['timestamp_unix'])
+                    
+                    if (delete_ext == file_ext and 
+                        time_diff <= self.event_correlation_timeout):
+                        
+                        # Additional checks to increase confidence this is a move:
+                        # - Same filename (exact rename/move)
+                        # - OR similar file size (different name but likely same file)
+                        # - OR if we can't get delete size (common), use timing + extension match
+                        same_name = delete_name == file_name
+                        similar_size = abs(delete_size - file_size) < 1024 if delete_size > 0 else False
+                        no_delete_size = delete_size == 0  # Can't get size of deleted file
+                        
+                        # Be more permissive if we can't get the deleted file size
+                        match_confidence = same_name or similar_size or no_delete_size
+                        
+                        if match_confidence:
+                            if self.verbose:
+                                if same_name:
+                                    match_reason = "same_name"
+                                elif similar_size:
+                                    match_reason = f"similar_size ({delete_size} ≈ {file_size})"
+                                else:
+                                    match_reason = f"timing_and_extension (no_delete_size)"
+                                print(f"[CORRELATION] MATCH FOUND ({match_reason})! {delete_path} -> {event_data['path']}")
+                            
+                            # Check if this file move is actually just a file being moved into a recently renamed directory
+                            # In this case, we don't want to report it as a separate file move
+                            file_move_is_directory_related = False
+                            # Note: We're already inside the correlation_lock, so no need to acquire it again
+                            for old_dir, new_dir in self.recent_directory_moves.items():
+                                # Check if the file was moved FROM the directory's old location TO the directory's new location
+                                if (delete_path.startswith(old_dir) and 
+                                    event_data['path'].startswith(new_dir)):
+                                    # This is likely a file move that's part of moving files into a renamed directory
+                                    # Don't report it as a separate move
+                                    file_move_is_directory_related = True
+                                    if self.verbose:
+                                        print(f"[CORRELATION] File move is related to directory move {old_dir} -> {new_dir}, skipping separate report")
+                                    break
+                            
+                            if file_move_is_directory_related:
+                                # Remove the matched delete event but don't log a separate file move
+                                del self.pending_deletes[delete_path]
+                                return True
+                            
+                            # Found a match! Create move event
+                            move_event = {
+                                'timestamp': event_data['timestamp'],
+                                'type': 'file_moved' if not event_data['is_directory'] else 'directory_moved',
+                                'old_path': delete_path,
+                                'new_path': event_data['path'],
+                                'old_name': delete_name,
+                                'new_name': file_name,
+                                'is_directory': event_data['is_directory'],
+                                'correlated': True
+                            }
+                            
+                            # Check if it's a rename (same parent) or move
+                            if Path(delete_path).parent == Path(event_data['path']).parent:
+                                move_event['type'] = move_event['type'].replace('moved', 'renamed')
+                            
+                            # Remove the matched delete event and log the move
+                            del self.pending_deletes[delete_path]
+                            self.log_event(move_event)
+                            return True
+                
+                # No match found - store create event for later correlation
+                if self.verbose:
+                    print(f"[CORRELATION] No delete match found, storing create event for {event_data['path']}")
+                self.pending_creates[event_data['path']] = {
+                    **event_data,
+                    'timestamp_unix': current_time
+                }
+                return False
 
     def flush_pending_events(self) -> List[Dict]:
         """Flush any pending move events (for testing or manual triggering)"""
         with self.correlation_lock:
-            # Move events are stored in pending_creates for correlation
-            events_to_flush = list(self.pending_creates.values())
+            # Collect events from both pending_creates and pending_deletes
+            events_to_flush = list(self.pending_creates.values()) + list(self.pending_deletes.values())
             self.pending_creates.clear()
+            self.pending_deletes.clear()
         
-        # Log the flushed events
+        # Mark all flushed events as unmatched and log them
         for event_data in events_to_flush:
-            self.log_event(event_data)
+            # Mark as unmatched since they're being flushed
+            event_data['unmatched'] = True
+            
+            # Only log if this is a proper move event (has both old_path and new_path)
+            if 'old_path' in event_data and 'new_path' in event_data:
+                self.log_event(event_data)
+            elif self.verbose:
+                # For non-move events, just print them without adding to move_events
+                timestamp = event_data.get('timestamp', 'unknown')
+                event_type = event_data.get('type', 'unknown')
+                path = event_data.get('path', 'unknown')
+                print(f"[{timestamp}] FLUSHED_{event_type.upper()}: {path}")
         
         return events_to_flush

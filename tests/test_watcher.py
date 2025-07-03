@@ -188,8 +188,8 @@ class TestMoveTrackingHandler:
         assert event['new_path'] == '/new/folder/file.txt'
         assert event['correlated'] == True
 
-    def test_windows_style_different_filenames_no_correlation(self):
-        """Test that files with different names are NOT correlated (current logic requires same filename)"""
+    def test_windows_style_different_filenames_correlation(self):
+        """Test that files with different names ARE correlated when timing and extension match (improved logic)"""
         handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
         
         # Create mock delete event
@@ -209,9 +209,13 @@ class TestMoveTrackingHandler:
             mock_stat.return_value.st_size = 1024
             handler.on_created(create_event)
         
-        # Should NOT correlate because filenames are different
-        # (Current logic only handles moves with same filename)
-        assert len(handler.move_events) == 0
+        # Should correlate because extension matches, timing is close, and it's likely a rename
+        # (Improved logic handles renames with different filenames)
+        assert len(handler.move_events) == 1
+        move_event = handler.move_events[0]
+        assert move_event['type'] == 'file_renamed'  # Same directory = rename
+        assert move_event['old_path'] == '/same/path/oldname.txt'
+        assert move_event['new_path'] == '/same/path/newname.txt'
 
     def test_event_correlation_timeout(self):
         """Test that events outside timeout window are not correlated"""
@@ -266,9 +270,9 @@ class TestMoveTrackingHandler:
 
     def test_flush_pending_events(self):
         """Test flushing of unmatched pending events"""
-        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
+        handler = MoveTrackingHandler(['.txt', '.py'], [], event_correlation_timeout=1.0)
         
-        # Create unmatched delete event
+        # Create unmatched delete event (.txt file)
         delete_event = FileDeletedEvent('/deleted/file1.txt')
         
         with patch('pathlib.Path.exists', return_value=False), \
@@ -276,18 +280,19 @@ class TestMoveTrackingHandler:
             mock_stat.return_value.st_size = 1024
             handler.on_deleted(delete_event)
         
-        # Create unmatched create event with different filename
-        create_event = FileCreatedEvent('/created/file2.txt')
+        # Create unmatched create event with different extension (.py file)
+        # This will NOT correlate because extensions are different
+        create_event = FileCreatedEvent('/created/file2.py')
         
         with patch('pathlib.Path.exists', return_value=True), \
              patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024  # Same size but different filename, won't correlate
+            mock_stat.return_value.st_size = 1024  # Same size but different extension, won't correlate
             handler.on_created(create_event)
         
         # Flush pending events
         unmatched = handler.flush_pending_events()
         
-        # Should have 2 unmatched events
+        # Should have 2 unmatched events (different extensions prevent correlation)
         assert len(unmatched) == 2
         
         # Check delete event
@@ -297,7 +302,7 @@ class TestMoveTrackingHandler:
         
         # Check create event
         create_unmatched = next(e for e in unmatched if e['type'] == 'file_created')
-        assert create_unmatched['path'] == '/created/file2.txt'
+        assert create_unmatched['path'] == '/created/file2.py'
         assert create_unmatched['unmatched'] == True
 
 
