@@ -5,7 +5,23 @@ Path and file utilities for BlendWatch
 import os
 import re
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Any
+
+
+def bytes_to_string(data: Any) -> str:
+    """Convert bytes to string with minimal processing.
+    
+    This is a common helper used throughout the module for consistent string handling.
+    
+    Args:
+        data: Data to convert, can be bytes or other types
+        
+    Returns:
+        String representation with null bytes removed
+    """
+    if isinstance(data, bytes):
+        return data.decode('utf-8', errors='replace').rstrip('\x00')
+    return str(data).rstrip('\x00')
 
 
 def resolve_path(path: str) -> Path:

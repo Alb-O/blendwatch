@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Set
 from blender_asset_tracer import blendfile
 from blendwatch.utils.path_utils import resolve_path
+from blendwatch.utils import bytes_to_string
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class FastLibraryReader:
         self._file_mtime: Optional[float] = None
         self._path_resolution_cache: Dict[str, str] = {}
     
-    def get_library_paths_minimal(self) -> Dict[str, str]:
+    def get_library_paths_minimal(self, resolve_paths: bool = True) -> Dict[str, str]:
         """Get library paths with minimal I/O operations.
         
         This implementation uses several optimizations:
@@ -38,10 +39,17 @@ class FastLibraryReader:
         3. Implements lazy loading with mtime-based cache invalidation
         4. Avoids reading DNA1 blocks unless absolutely necessary
         
+        Args:
+            resolve_paths: If True (default), resolves paths to absolute. If False, returns raw paths.
+            
         Returns:
             Dictionary mapping library names to their file paths
         """
-        # Check if we can use cached data
+        # For non-resolved paths, don't use cache to avoid contamination
+        if not resolve_paths:
+            return self._get_raw_library_paths()
+            
+        # Check if we can use cached data for resolved paths
         current_mtime = self._get_file_mtime()
         if (self._cached_libraries is not None and 
             self._file_mtime == current_mtime):
@@ -92,6 +100,43 @@ class FastLibraryReader:
         # Cache the results
         self._cached_libraries = library_paths
         self._file_mtime = current_mtime
+        return library_paths
+        
+    def _get_raw_library_paths(self) -> Dict[str, str]:
+        """Get library paths without resolving them (raw as stored in the file).
+        
+        This is primarily used for testing or when original paths are needed.
+        
+        Returns:
+            Dictionary mapping library names to their file paths as stored in the .blend file
+        """
+        library_paths = {}
+        
+        try:
+            # Use cached blend file opening for persistence
+            with blendfile.open_cached(self.blend_file_path, mode="rb") as bf:
+                # Get only Library blocks using the efficient code_index
+                library_blocks = bf.code_index.get(b"LI", [])
+                
+                # Process each library block with minimal field access
+                for lib_block in library_blocks:
+                    try:
+                        # Only read the specific fields we need
+                        name = self._read_library_field(lib_block, b"name")
+                        filepath = self._read_library_field(lib_block, b"filepath", fallback_field=b"name")
+                        
+                        if name and filepath:
+                            # Convert bytes to string with minimal processing
+                            name_str = self._bytes_to_string(name)
+                            filepath_str = self._bytes_to_string(filepath)
+                            library_paths[name_str] = filepath_str
+                            
+                    except Exception:
+                        continue
+        
+        except Exception:
+            return {}
+            
         return library_paths
     
     def _resolve_library_path(self, library_path: str) -> str:
@@ -158,9 +203,7 @@ class FastLibraryReader:
     
     def _bytes_to_string(self, data) -> str:
         """Convert bytes to string with minimal processing."""
-        if isinstance(data, bytes):
-            return data.decode('utf-8', errors='replace').rstrip('\x00')
-        return str(data).rstrip('\x00')
+        return bytes_to_string(data)
     
     def _get_file_mtime(self) -> float:
         """Get file modification time."""
@@ -301,9 +344,8 @@ class StreamingLibraryScanner:
     
     def _safe_decode(self, data) -> str:
         """Safely decode bytes to string."""
-        if isinstance(data, bytes):
-            return data.decode('utf-8', errors='replace').rstrip('\x00')
-        return str(data).rstrip('\x00')
+        # Use the utility function for consistent string handling
+        return bytes_to_string(data)
 
 
 class SelectiveBlockReader:
@@ -387,47 +429,12 @@ def get_libraries_ultra_fast(blend_file: Union[str, Path], resolve_paths: bool =
     Returns:
         Dictionary mapping library names to their file paths
     """
+    # Create a reader instance just once
     reader = FastLibraryReader(blend_file)
     
-    if not resolve_paths:
-        # Return raw paths without resolution for testing purposes
-        library_paths = {}
-        try:
-            # Use cached blend file opening for persistence
-            with blendfile.open_cached(Path(str(blend_file)), mode="rb") as bf:
-                # Get only Library blocks using the efficient code_index
-                library_blocks = bf.code_index.get(b"LI", [])
-                
-                # Process each library block with minimal field access
-                for lib_block in library_blocks:
-                    try:
-                        # Only read the specific fields we need
-                        name_bytes = lib_block.get(b"name")
-                        if name_bytes:
-                            name = name_bytes.rstrip(b"\0").decode('utf-8', errors='replace')
-                        else:
-                            continue  # Skip if no name
-                            
-                        filepath_bytes = lib_block.get(b"filepath")
-                        if not filepath_bytes:  # Fallback to name if filepath doesn't exist
-                            filepath_bytes = lib_block.get(b"name")
-                            
-                        if filepath_bytes:
-                            filepath_str = filepath_bytes.rstrip(b"\0").decode('utf-8', errors='replace')
-                        else:
-                            continue  # Skip if no filepath
-                        
-                        if name and filepath_str:
-                            library_paths[name] = filepath_str
-                            
-                    except Exception:
-                        continue
-            
-            return library_paths
-        except Exception:
-            return {}
-    
-    return reader.get_library_paths_minimal()
+    # Use the same underlying method, but add a parameter to control path resolution
+    # This eliminates code duplication and makes the function more maintainable
+    return reader.get_library_paths_minimal(resolve_paths=resolve_paths)
 
 
 def batch_scan_libraries(blend_files: List[Path], max_workers: int = 4) -> Dict[Path, Dict[str, str]]:
@@ -454,21 +461,4 @@ def batch_scan_libraries(blend_files: List[Path], max_workers: int = 4) -> Dict[
     return scanner.scan_libraries_batch(files_with_libraries)
 
 
-def is_blend_file_modified_recently(blend_file: Path, threshold_seconds: float = 300) -> bool:
-    """Check if a blend file was modified recently.
-    
-    This can be used to prioritize rescanning of recently modified files.
-    
-    Args:
-        blend_file: Path to the blend file
-        threshold_seconds: Time threshold in seconds
-        
-    Returns:
-        True if file was modified within the threshold
-    """
-    try:
-        import time
-        mtime = blend_file.stat().st_mtime
-        return (time.time() - mtime) < threshold_seconds
-    except OSError:
-        return False
+# The function is_blend_file_modified_recently was removed as it was unused dead code

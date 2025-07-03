@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 from blender_asset_tracer import blendfile
 from blendwatch.utils.path_utils import resolve_path, get_relative_path
+from blendwatch.utils import bytes_to_string
 # Import the new block-level optimizations
 from .block_level_optimizations import get_libraries_ultra_fast, FastLibraryReader
 
@@ -62,9 +63,9 @@ class LibraryPathWriter:
                     
                     # Convert bytes to string if needed
                     if isinstance(name, bytes):
-                        name = name.decode('utf-8', errors='replace').rstrip('\x00')
+                        name = bytes_to_string(name)
                     if isinstance(filepath, bytes):
-                        filepath = filepath.decode('utf-8', errors='replace').rstrip('\x00')
+                        filepath = bytes_to_string(filepath)
                     
                     library_paths[name] = filepath
                 except (KeyError, UnicodeDecodeError) as e:
@@ -179,14 +180,14 @@ class LibraryPathWriter:
                     
                     # Convert bytes to string for comparison
                     if isinstance(current_filepath, bytes):
-                        current_filepath_str = current_filepath.decode('utf-8', errors='replace').rstrip('\x00')
+                        current_filepath_str = bytes_to_string(current_filepath)
                     else:
                         current_filepath_str = str(current_filepath).rstrip('\x00')
                     
                     if isinstance(current_name, bytes):
-                        current_name_str = current_name.decode('utf-8', errors='replace').rstrip('\x00')
+                        current_name_str = bytes_to_string(current_name)
                     else:
-                        current_name_str = str(current_name).rstrip('\x00')
+                        current_name_str = bytes_to_string(current_name)
                     
                     # Check if this library needs updating
                     if current_name_str in libraries_to_update:
@@ -251,9 +252,9 @@ class LibraryPathWriter:
                     
                     # Convert bytes to string for comparison
                     if isinstance(current_name, bytes):
-                        current_name_str = current_name.decode('utf-8', errors='replace').rstrip('\x00')
+                        current_name_str = bytes_to_string(current_name)
                     else:
-                        current_name_str = str(current_name).rstrip('\x00')
+                        current_name_str = bytes_to_string(current_name)
                     
                     # Check if this is the library we want to update
                     if current_name_str == library_name:
