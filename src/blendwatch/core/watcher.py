@@ -122,8 +122,25 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if not self.extensions:
             return True  # Track all files if no extensions specified
         
-        file_ext = Path(file_path).suffix.lower()
-        return file_ext in self.extensions
+        file_path_obj = Path(file_path)
+        file_ext = file_path_obj.suffix.lower()
+        
+        # Check if it matches our tracked extensions
+        if file_ext not in self.extensions:
+            return False
+        
+        # Special handling for .blend files - ignore backup and temporary files
+        if file_ext == '.blend':
+            filename = file_path_obj.name
+            # Ignore Blender backup files (.blend1, .blend2, etc.)
+            if filename.endswith(('.blend1', '.blend2', '.blend3', '.blend4', '.blend5',
+                                 '.blend6', '.blend7', '.blend8', '.blend9')):
+                return False
+            # Ignore Blender temporary files (.blend@)
+            if filename.endswith('.blend@'):
+                return False
+        
+        return True
     
     def log_event(self, event_data: Dict):
         """Log event to output file and/or console"""
