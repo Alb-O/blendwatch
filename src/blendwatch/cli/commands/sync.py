@@ -11,7 +11,7 @@ import click
 from colorama import Fore, Style
 
 from blendwatch.core.watcher import FileWatcher
-from blendwatch.blender.link_updater import apply_move_log
+from blendwatch.blender.link_updater import apply_move_log_incremental
 from blendwatch.cli.utils import load_config_with_fallback, handle_cli_exception
 
 
@@ -67,7 +67,7 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
         
         # Keep track of when we last processed the log to avoid reprocessing
         # Initialize to current size if log file exists to avoid processing old entries
-        last_processed_size = log_file.stat().st_size if log_file.exists() else 0
+        last_processed_position = log_file.stat().st_size if log_file.exists() else 0
         
         # Keep the program running and periodically check for updates
         while True:
@@ -76,25 +76,32 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
             # Check if log file has grown (new events)
             if log_file.exists():
                 current_size = log_file.stat().st_size
-                if current_size > last_processed_size:
+                if current_size > last_processed_position:
                     if verbose:
-                        click.echo(f"{Fore.CYAN}Processing new file changes...{Style.RESET_ALL}")
+                        click.echo(f"{Fore.CYAN}Processing new file changes... (position: {last_processed_position} -> {current_size}){Style.RESET_ALL}")
                     
                     try:
-                        updated = apply_move_log(str(log_file), str(update_directory), 
-                                               dry_run=dry_run, verbose=verbose)
+                        # Process only new entries from the last position
+                        updated, new_position = apply_move_log_incremental(
+                            str(log_file), str(update_directory), 
+                            start_position=last_processed_position,
+                            dry_run=dry_run, verbose=verbose
+                        )
                         if updated > 0:
                             if dry_run:
                                 click.echo(f"{Fore.CYAN}Would update {updated} library paths{Style.RESET_ALL}")
                             else:
                                 click.echo(f"{Fore.GREEN}Auto-updated {updated} library paths{Style.RESET_ALL}")
+                        else:
+                            if verbose:
+                                click.echo(f"{Fore.YELLOW}No library path updates needed{Style.RESET_ALL}")
                     except Exception as e:
                         click.echo(f"{Fore.RED}Error during auto-update: {e}{Style.RESET_ALL}")
                         if verbose:
                             import traceback
                             traceback.print_exc()
                     
-                    last_processed_size = current_size
+                    last_processed_position = new_position
             
     except KeyboardInterrupt:
         click.echo(f"\n{Fore.YELLOW}Stopping BlendWatch auto-sync...{Style.RESET_ALL}")
