@@ -403,6 +403,11 @@ class FileWatcher:
         self.observer.stop()
         self.observer.join()
         
+        # Close the log file explicitly to release the handle
+        if hasattr(self, 'event_handler') and hasattr(self.event_handler, 'output_fp') and self.event_handler.output_fp:
+            self.event_handler.output_fp.close()
+            self.event_handler.output_fp = None
+        
         if self.verbose:
             print(f"Stopped watching: {self.watch_path}")
     
