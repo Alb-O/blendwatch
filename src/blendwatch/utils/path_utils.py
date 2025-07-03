@@ -34,7 +34,9 @@ def find_files_by_extension(directory: Path, extensions: List[str], recursive: b
     for ext in extensions:
         if not ext.startswith('.'):
             ext = '.' + ext
-        files.extend(directory.glob(f"{pattern}{ext}"))
+        # Use glob to find matching paths, then filter to only include actual files
+        matching_paths = directory.glob(f"{pattern}{ext}")
+        files.extend([path for path in matching_paths if path.is_file()])
     
     return files
 

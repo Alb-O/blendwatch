@@ -30,6 +30,8 @@ class LibraryPathWriter:
         self.blend_file_path = resolve_path(str(blend_file_path))
         if not self.blend_file_path.exists():
             raise FileNotFoundError(f"Blend file not found: {self.blend_file_path}")
+        if not self.blend_file_path.is_file():
+            raise ValueError(f"Path must be a file, not a directory: {self.blend_file_path}")
         if not self.blend_file_path.suffix.lower() == '.blend':
             raise ValueError(f"File must be a .blend file: {self.blend_file_path}")
     

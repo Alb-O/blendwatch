@@ -13,7 +13,6 @@ from blendwatch.core.watcher import FileWatcher
 from blendwatch.core.config import load_default_config
 from blendwatch.cli.utils import load_config_with_fallback
 
-
 @click.command()
 @click.argument('path', type=click.Path(exists=True), default='.', required=False)
 @click.option('--extensions', '-e', multiple=True, 

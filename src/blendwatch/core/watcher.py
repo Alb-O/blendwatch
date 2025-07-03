@@ -23,6 +23,66 @@ from watchdog.events import (
     DirDeletedEvent
 )
 
+from ..utils import path_utils
+
+
+class FileWatcher:
+    """Main file watcher class for tracking file/directory moves and renames"""
+    
+    def __init__(self, watch_path: str, extensions: List[str], ignore_dirs: List[str],
+                 recursive: bool = True, output_file: Optional[str] = None, 
+                 verbose: bool = False, event_correlation_timeout: float = 2.0):
+        """Initialize the file watcher
+        
+        Args:
+            watch_path: Path to watch for changes
+            extensions: List of file extensions to track
+            ignore_dirs: List of directory patterns to ignore
+            recursive: Whether to watch subdirectories recursively
+            output_file: Optional output file to log changes
+            verbose: Whether to enable verbose output
+            event_correlation_timeout: Timeout for correlating move events
+        """
+        self.watch_path = Path(watch_path)
+        self.extensions = extensions
+        self.ignore_dirs = ignore_dirs
+        self.recursive = recursive
+        self.output_file = output_file
+        self.verbose = verbose
+        self.event_correlation_timeout = event_correlation_timeout
+        
+        # Create observer and event handler
+        self.observer = Observer()
+        self.event_handler = MoveTrackingHandler(
+            extensions=extensions,
+            ignore_patterns=ignore_dirs,
+            output_file=output_file,
+            verbose=verbose,
+            event_correlation_timeout=event_correlation_timeout
+        )
+    
+    def start(self):
+        """Start watching for file changes"""
+        self.observer.schedule(
+            self.event_handler,
+            path=str(self.watch_path),
+            recursive=self.recursive
+        )
+        self.observer.start()
+    
+    def stop(self):
+        """Stop watching for file changes"""
+        self.observer.stop()
+        self.observer.join()
+    
+    def is_alive(self) -> bool:
+        """Check if the watcher is currently running"""
+        return self.observer.is_alive()
+    
+    def get_events(self) -> List[Dict]:
+        """Get list of recorded move events"""
+        return self.event_handler.move_events.copy()
+
 
 class MoveTrackingHandler(FileSystemEventHandler):
     """Event handler for tracking file and directory moves/renames"""
@@ -32,7 +92,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
                  event_correlation_timeout: float = 2.0):
         super().__init__()
         self.extensions = [ext.lower() for ext in extensions]
-        self.ignore_patterns = [re.compile(pattern) for pattern in ignore_patterns]
+        self.ignore_patterns = ignore_patterns
         self.output_file = output_file
         self.verbose = verbose
         self.move_events: List[Dict] = []
@@ -55,14 +115,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
     
     def should_ignore_path(self, path: str) -> bool:
         """Check if path should be ignored based on ignore patterns"""
-        path_obj = Path(path)
-        
-        # Check each part of the path against ignore patterns
-        for part in path_obj.parts:
-            for pattern in self.ignore_patterns:
-                if pattern.search(part):
-                    return True
-        return False
+        return path_utils.is_path_ignored(Path(path), self.ignore_patterns)
     
     def should_track_file(self, file_path: str) -> bool:
         """Check if file should be tracked based on extensions"""
@@ -105,7 +158,26 @@ class MoveTrackingHandler(FileSystemEventHandler):
         
         # Determine event type
         if isinstance(event, DirMovedEvent):
-            event_type = 'directory_moved'
+            # Directory move: find all relevant files and create individual move events
+            moved_files = path_utils.find_files_by_extension(Path(dest_path), self.extensions, recursive=True)
+            for new_file_path in moved_files:
+                try:
+                    relative_path = new_file_path.relative_to(dest_path)
+                    old_file_path = Path(src_path) / relative_path
+                except ValueError:
+                    continue
+
+                file_event_data = {
+                    'timestamp': datetime.now().isoformat(),
+                    'type': 'file_moved',
+                    'old_path': str(old_file_path),
+                    'new_path': str(new_file_path),
+                    'old_name': new_file_path.name,
+                    'new_name': new_file_path.name,
+                    'is_directory': False
+                }
+                self.log_event(file_event_data)
+            return
         elif isinstance(event, FileMovedEvent):
             # Check if file should be tracked
             if not self.should_track_file(src_path) and not self.should_track_file(dest_path):
@@ -142,7 +214,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if self.should_ignore_path(path):
             return
         
-        # Determine if this is a file or directory and if we should track it
+        # We are not interested in directory events
         is_directory = isinstance(event, DirDeletedEvent)
         if not is_directory and not self.should_track_file(path):
             return
@@ -169,7 +241,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if self.should_ignore_path(path):
             return
         
-        # Determine if this is a file or directory and if we should track it
+        # We are not interested in directory events
         is_directory = isinstance(event, DirCreatedEvent)
         if not is_directory and not self.should_track_file(path):
             return
@@ -239,11 +311,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
                     
                     # For correlation, we check:
                     # 1. Same file extension (must match)
-                    # 2. Same file size (must match) 
-                    # 3. Same filename (for moves between folders)
-                    # 4. Within timing window
+                    # 2. Same filename (for moves between folders)
+                    # 3. Within timing window
                     if (create_ext == file_ext and 
-                        create_size == file_size and
                         create_name == file_name and  # Same filename = move between folders
                         abs(current_time - create_data['timestamp_unix']) <= self.event_correlation_timeout):
                         
@@ -267,154 +337,24 @@ class MoveTrackingHandler(FileSystemEventHandler):
                         del self.pending_creates[create_path]
                         self.log_event(move_event)
                         return True
-                
-                # No match found, store the delete event
+            else:
+                # For delete events, we just store the event data with the current timestamp
                 self.pending_deletes[event_data['path']] = {
                     **event_data,
                     'timestamp_unix': current_time
                 }
-                return True
-            
-            else:  # is_create
-                # Look for matching delete events
-                for delete_path, delete_data in list(self.pending_deletes.items()):
-                    delete_name, delete_ext, delete_size = self._get_file_info(delete_path)
-                    
-                    # For correlation, we check:
-                    # 1. Same file extension (must match)
-                    # 2. Same file size (must match)
-                    # 3. Same filename (for moves between folders)
-                    # 4. Within timing window
-                    if (delete_ext == file_ext and 
-                        delete_size == file_size and
-                        delete_name == file_name and  # Same filename = move between folders
-                        abs(current_time - delete_data['timestamp_unix']) <= self.event_correlation_timeout):
-                        
-                        # Found a match! Create move event
-                        move_event = {
-                            'timestamp': delete_data['timestamp'],
-                            'type': 'file_moved' if not event_data['is_directory'] else 'directory_moved',
-                            'old_path': delete_path,
-                            'new_path': event_data['path'],
-                            'old_name': delete_name,
-                            'new_name': file_name,
-                            'is_directory': event_data['is_directory'],
-                            'correlated': True
-                        }
-                        
-                        # Check if it's a rename (same parent) or move
-                        if Path(delete_path).parent == Path(event_data['path']).parent:
-                            move_event['type'] = move_event['type'].replace('moved', 'renamed')
-                        
-                        # Remove the matched delete event and log the move
-                        del self.pending_deletes[delete_path]
-                        self.log_event(move_event)
-                        return True
-                
-                # No match found, store the create event
-                self.pending_creates[event_data['path']] = {
-                    **event_data,
-                    'timestamp_unix': current_time
-                }
-                return True
         
         return False
 
     def flush_pending_events(self) -> List[Dict]:
-        """Flush any pending events and return unmatched events"""
+        """Flush any pending move events (for testing or manual triggering)"""
         with self.correlation_lock:
-            unmatched_events = []
-            
-            # Add unmatched deletes
-            for path, event_data in self.pending_deletes.items():
-                unmatched_events.append({
-                    'timestamp': event_data['timestamp'],
-                    'type': 'file_deleted' if not event_data['is_directory'] else 'directory_deleted',
-                    'path': path,
-                    'is_directory': event_data['is_directory'],
-                    'unmatched': True
-                })
-            
-            # Add unmatched creates
-            for path, event_data in self.pending_creates.items():
-                unmatched_events.append({
-                    'timestamp': event_data['timestamp'],
-                    'type': 'file_created' if not event_data['is_directory'] else 'directory_created',
-                    'path': path,
-                    'is_directory': event_data['is_directory'],
-                    'unmatched': True
-                })
-            
-            # Clear pending events
-            self.pending_deletes.clear()
+            # Move events are stored in pending_creates for correlation
+            events_to_flush = list(self.pending_creates.values())
             self.pending_creates.clear()
-            
-            return unmatched_events
-
-class FileWatcher:
-    """Main file watcher class"""
-    
-    def __init__(self, watch_path: str, extensions: List[str], ignore_dirs: List[str],
-                 output_file: Optional[str] = None, verbose: bool = False, 
-                 recursive: bool = True, event_correlation_timeout: float = 2.0):
-        self.watch_path = Path(watch_path)
-        self.extensions = extensions
-        self.ignore_dirs = ignore_dirs
-        self.output_file = output_file
-        self.verbose = verbose
-        self.recursive = recursive
-        self.event_correlation_timeout = event_correlation_timeout
         
-        # Create event handler
-        self.event_handler = MoveTrackingHandler(
-            extensions=extensions,
-            ignore_patterns=ignore_dirs,
-            output_file=output_file,
-            verbose=verbose,
-            event_correlation_timeout=event_correlation_timeout
-        )
+        # Log the flushed events
+        for event_data in events_to_flush:
+            self.log_event(event_data)
         
-        # Create observer
-        self.observer = Observer()
-    
-    def start(self):
-        """Start watching for file system events"""
-        self.observer.schedule(
-            self.event_handler,
-            str(self.watch_path),
-            recursive=self.recursive
-        )
-        self.observer.start()
-        
-        if self.verbose:
-            print(f"Started watching: {self.watch_path}")
-    
-    def stop(self):
-        """Stop watching for file system events"""
-        # Flush any pending events before stopping
-        unmatched_events = self.event_handler.flush_pending_events()
-        
-        # Log unmatched events if verbose
-        if self.verbose and unmatched_events:
-            print(f"Found {len(unmatched_events)} unmatched events:")
-            for event in unmatched_events:
-                print(f"  {event['type']}: {event['path']}")
-        
-        self.observer.stop()
-        self.observer.join()
-        
-        # Close the log file explicitly to release the handle
-        if hasattr(self, 'event_handler') and hasattr(self.event_handler, 'output_fp') and self.event_handler.output_fp:
-            self.event_handler.output_fp.close()
-            self.event_handler.output_fp = None
-        
-        if self.verbose:
-            print(f"Stopped watching: {self.watch_path}")
-    
-    def get_events(self) -> List[Dict]:
-        """Get list of recorded events"""
-        return self.event_handler.move_events.copy()
-    
-    def is_alive(self) -> bool:
-        """Check if watcher is still running"""
-        return self.observer.is_alive()
+        return events_to_flush
