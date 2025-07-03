@@ -66,7 +66,8 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
         click.echo(f"{Fore.YELLOW}Press Ctrl+C to stop auto-sync...{Style.RESET_ALL}")
         
         # Keep track of when we last processed the log to avoid reprocessing
-        last_processed_size = 0
+        # Initialize to current size if log file exists to avoid processing old entries
+        last_processed_size = log_file.stat().st_size if log_file.exists() else 0
         
         # Keep the program running and periodically check for updates
         while True:
