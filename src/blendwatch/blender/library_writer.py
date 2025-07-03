@@ -43,8 +43,9 @@ class LibraryPathWriter:
         """
         library_paths = {}
         
-        with blendfile.BlendFile(self.blend_file_path, mode="rb") as bf:
-            # Get all library blocks (LI = Library)
+        # Use cached blend file opening for better performance
+        with blendfile.open_cached(self.blend_file_path, mode="rb") as bf:
+            # Get all library blocks (LI = Library) efficiently
             libraries = bf.code_index.get(b"LI", [])
             
             for library in libraries:
@@ -95,8 +96,12 @@ class LibraryPathWriter:
         """
         if not path_mapping:
             return 0
-        
+
         updated_count = 0
+        
+        # First, check what actually needs updating using cached read access
+        current_paths = self.get_library_paths()  # This uses cached access
+        libraries_to_update = {}
         
         # Create a more flexible mapping that includes filename-based matching
         flexible_mapping = {}
@@ -115,6 +120,42 @@ class LibraryPathWriter:
             if old_filename:  # Only add if filename is not empty
                 flexible_mapping[old_filename] = new_path
         
+        # Check which libraries need updating
+        for name, current_filepath in current_paths.items():
+            new_path = None
+            
+            # Strategy 1: Exact path match
+            if current_filepath in path_mapping:
+                new_path = path_mapping[current_filepath]
+            
+            # Strategy 2: Filename match (for cross-platform compatibility)
+            if new_path is None:
+                # Handle Blender relative paths specially
+                if current_filepath.startswith('//'):
+                    current_filename = current_filepath[2:].split('/')[-1].split('\\')[-1]
+                else:
+                    current_filename = Path(current_filepath).name
+                
+                if current_filename and current_filename in flexible_mapping:
+                    new_path = flexible_mapping[current_filename]
+            
+            # Strategy 3: Relative path resolution
+            if new_path is None and current_filepath.startswith('//'):
+                # Resolve relative path to absolute
+                relative_path = current_filepath[2:]  # Remove '//'
+                blend_dir = self.blend_file_path.parent
+                resolved_path = (blend_dir / relative_path).resolve()
+                if str(resolved_path) in path_mapping:
+                    new_path = path_mapping[str(resolved_path)]
+            
+            if new_path is not None:
+                libraries_to_update[name] = (current_filepath, new_path)
+        
+        # Only open in write mode if we have updates to make
+        if not libraries_to_update:
+            return 0
+
+        # Now perform the actual updates using write mode
         with blendfile.BlendFile(self.blend_file_path, mode="r+b") as bf:
             # Get all library blocks (LI = Library)
             libraries = bf.code_index.get(b"LI", [])
@@ -136,34 +177,15 @@ class LibraryPathWriter:
                     else:
                         current_filepath_str = str(current_filepath).rstrip('\x00')
                     
-                    # Check for matches using multiple strategies
-                    new_path = None
+                    if isinstance(current_name, bytes):
+                        current_name_str = current_name.decode('utf-8', errors='replace').rstrip('\x00')
+                    else:
+                        current_name_str = str(current_name).rstrip('\x00')
                     
-                    # Strategy 1: Exact path match
-                    if current_filepath_str in path_mapping:
-                        new_path = path_mapping[current_filepath_str]
-                    
-                    # Strategy 2: Filename match (for cross-platform compatibility)
-                    if new_path is None:
-                        # Handle Blender relative paths specially
-                        if current_filepath_str.startswith('//'):
-                            current_filename = current_filepath_str[2:].split('/')[-1].split('\\')[-1]
-                        else:
-                            current_filename = Path(current_filepath_str).name
+                    # Check if this library needs updating
+                    if current_name_str in libraries_to_update:
+                        old_path, new_path = libraries_to_update[current_name_str]
                         
-                        if current_filename and current_filename in flexible_mapping:
-                            new_path = flexible_mapping[current_filename]
-                    
-                    # Strategy 3: Relative path resolution
-                    if new_path is None and current_filepath_str.startswith('//'):
-                        # Resolve relative path to absolute
-                        relative_path = current_filepath_str[2:]  # Remove '//'
-                        blend_dir = self.blend_file_path.parent
-                        resolved_path = (blend_dir / relative_path).resolve()
-                        if str(resolved_path) in path_mapping:
-                            new_path = path_mapping[str(resolved_path)]
-                    
-                    if new_path is not None:
                         # Convert path based on relative parameter
                         if relative:
                             # Convert new path to relative format
@@ -188,13 +210,6 @@ class LibraryPathWriter:
                         try:
                             library[b"filepath"] = new_path_bytes
                             # For the name field, keep the original library name/identifier if it was relative
-                            current_name = library[b"name"]
-                            if isinstance(current_name, bytes):
-                                current_name_str = current_name.decode('utf-8', errors='replace').rstrip('\x00')
-                            else:
-                                current_name_str = str(current_name).rstrip('\x00')
-                            
-                            # Only update name if it was an absolute path (not a relative reference like //file.blend)
                             if not current_name_str.startswith('//'):
                                 library[b"name"] = new_path_bytes
                         except KeyError:
@@ -360,3 +375,83 @@ def get_blend_file_libraries(blend_file: Union[str, Path]) -> Dict[str, str]:
     """
     writer = LibraryPathWriter(blend_file)
     return writer.get_library_paths()
+
+
+def get_blend_file_libraries_fast(blend_file: Union[str, Path]) -> Dict[str, str]:
+    """Fast convenience function to get all library paths from a blend file using caching.
+    
+    This version uses the blender-asset-tracer's caching system for better performance.
+    
+    Args:
+        blend_file: Path to the .blend file
+        
+    Returns:
+        Dictionary mapping library names to their file paths
+    """
+    blend_path = resolve_path(str(blend_file))
+    library_paths = {}
+    
+    # Use cached access for maximum performance
+    with blendfile.open_cached(blend_path, mode="rb") as bf:
+        # Get all library blocks (LI = Library) efficiently using the code index
+        libraries = bf.code_index.get(b"LI", [])
+        
+        for library in libraries:
+            try:
+                name = library[b"name"]
+                # Try filepath first, fall back to name if filepath doesn't exist
+                try:
+                    filepath = library[b"filepath"]
+                except KeyError:
+                    # In newer Blender versions, the library path might be stored in the name field
+                    filepath = library[b"name"]
+                
+                # Convert bytes to string if needed
+                if isinstance(name, bytes):
+                    name = name.decode('utf-8', errors='replace').rstrip('\x00')
+                if isinstance(filepath, bytes):
+                    filepath = filepath.decode('utf-8', errors='replace').rstrip('\x00')
+                
+                library_paths[name] = filepath
+            except (KeyError, UnicodeDecodeError) as e:
+                log.warning(f"Could not read library info from {blend_file}: {e}")
+                continue
+    
+    return library_paths
+
+
+def update_blend_file_paths_fast(blend_file: Union[str, Path], 
+                                path_mapping: Dict[str, str], 
+                                relative: bool = False) -> int:
+    """Fast convenience function to update library paths in a blend file.
+    
+    This version checks if updates are needed before opening in write mode.
+    
+    Args:
+        blend_file: Path to the .blend file
+        path_mapping: Dictionary mapping old paths to new paths
+        relative: If True, convert absolute paths to relative format (default: False)
+        
+    Returns:
+        Number of library paths that were updated
+    """
+    # First check if any updates are needed using fast cached read
+    current_paths = get_blend_file_libraries_fast(blend_file)
+    updates_needed = False
+    
+    for current_path in current_paths.values():
+        if current_path in path_mapping:
+            updates_needed = True
+            break
+        # Also check filename-based mapping
+        filename = Path(current_path).name if not current_path.startswith('//') else current_path[2:].split('/')[-1].split('\\')[-1]
+        if filename in path_mapping:
+            updates_needed = True
+            break
+    
+    if not updates_needed:
+        return 0
+    
+    # Only create writer if updates are actually needed
+    writer = LibraryPathWriter(blend_file)
+    return writer.update_library_paths(path_mapping, relative=relative)

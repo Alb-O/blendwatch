@@ -138,9 +138,8 @@ class BlendFileCache:
         self._cache_misses += 1
         
         try:
-            from blendwatch.blender.library_writer import LibraryPathWriter
-            writer = LibraryPathWriter(blend_file)
-            library_paths = writer.get_library_paths()
+            from blendwatch.blender.library_writer import get_blend_file_libraries_fast
+            library_paths = get_blend_file_libraries_fast(blend_file)
             
             # Update cache
             mtime, size = self._get_file_info(blend_file)

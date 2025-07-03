@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from blendwatch.blender.library_writer import LibraryPathWriter
+from blendwatch.blender.library_writer import LibraryPathWriter, get_blend_file_libraries_fast
 from blendwatch.blender.cache import BlendFileCache
 from blendwatch.core.config import Config, load_default_config
 from blendwatch.utils.path_utils import resolve_path, is_path_ignored, find_files_by_extension

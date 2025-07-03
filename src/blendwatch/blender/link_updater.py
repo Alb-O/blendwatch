@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple, Union
 
 from blendwatch.blender.backlinks import BacklinkScanner
-from blendwatch.blender.library_writer import LibraryPathWriter
+from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths_fast
 
 log = logging.getLogger(__name__)
 
@@ -116,8 +116,8 @@ def apply_move_log_incremental(
         for new_path in new_paths:
             for result in results:
                 try:
-                    writer = LibraryPathWriter(result.blend_file)
                     if dry_run:
+                        writer = LibraryPathWriter(result.blend_file)
                         current = writer.get_library_paths()
                         if old_path in current.values():
                             total_updates += 1
@@ -125,7 +125,12 @@ def apply_move_log_incremental(
                                 print(f"Would update {result.blend_file} -> {new_path}")
                         continue
 
-                    updated = writer.update_library_path(old_path, new_path, relative=relative)
+                    # Use fast update function that checks if update is needed first
+                    updated = update_blend_file_paths_fast(
+                        result.blend_file, 
+                        {old_path: new_path}, 
+                        relative=relative
+                    )
                     if updated:
                         total_updates += 1
                         if verbose:
@@ -188,8 +193,8 @@ def apply_move_log(
         results = scanner.find_backlinks_to_file(old_path)
         for result in results:
             try:
-                writer = LibraryPathWriter(result.blend_file)
                 if dry_run:
+                    writer = LibraryPathWriter(result.blend_file)
                     current = writer.get_library_paths()
                     if old_path in current.values():
                         total_updates += 1
@@ -197,7 +202,12 @@ def apply_move_log(
                             print(f"Would update {result.blend_file} -> {new_path}")
                     continue
 
-                updated = writer.update_library_path(old_path, new_path, relative=relative)
+                # Use fast update function
+                updated = update_blend_file_paths_fast(
+                    result.blend_file, 
+                    {old_path: new_path}, 
+                    relative=relative
+                )
                 if updated:
                     total_updates += 1
                     if verbose:
