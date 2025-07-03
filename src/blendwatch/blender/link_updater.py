@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple, Union
 
 from blendwatch.blender.backlinks import BacklinkScanner
-from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths_fast
+from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths_fast, update_blend_file_paths_with_precheck
 
 log = logging.getLogger(__name__)
 
@@ -125,8 +125,8 @@ def apply_move_log_incremental(
                                 print(f"Would update {result.blend_file} -> {new_path}")
                         continue
 
-                    # Use fast update function that checks if update is needed first
-                    updated = update_blend_file_paths_fast(
+                    # Use ultra-fast update function with pre-checking
+                    updated = update_blend_file_paths_with_precheck(
                         result.blend_file, 
                         {old_path: new_path}, 
                         relative=relative
@@ -180,9 +180,29 @@ def apply_move_log(
     Returns
     -------
     int
-        Number of library paths updated across all blend files.
+        Number of library paths updated
     """
-    moves = parse_move_log_simple(log_file)
+    log_path = Path(log_file)
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        return 0
+
+    # Parse the log file to extract moves
+    moves = []
+    try:
+        with open(log_path, "r") as f:
+            for line in f:
+                try:
+                    event = json.loads(line.strip())
+                    if event.get("type") == "file_moved":
+                        old_path = event["old_path"]
+                        new_path = event["new_path"]
+                        moves.append((old_path, new_path))
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        log.error(f"Error parsing move log {log_path}: {e}")
+        return 0
+    
     if not moves:
         return 0
 
@@ -202,12 +222,9 @@ def apply_move_log(
                             print(f"Would update {result.blend_file} -> {new_path}")
                     continue
 
-                # Use fast update function
-                updated = update_blend_file_paths_fast(
-                    result.blend_file, 
-                    {old_path: new_path}, 
-                    relative=relative
-                )
+                # Update the path in this file
+                writer = LibraryPathWriter(result.blend_file)
+                updated = writer.update_library_path(old_path, new_path, relative=relative)
                 if updated:
                     total_updates += 1
                     if verbose:

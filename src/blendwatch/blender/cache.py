@@ -138,6 +138,7 @@ class BlendFileCache:
         self._cache_misses += 1
         
         try:
+            # Use the ultra-fast library reader for better performance
             from blendwatch.blender.library_writer import get_blend_file_libraries_fast
             library_paths = get_blend_file_libraries_fast(blend_file)
             

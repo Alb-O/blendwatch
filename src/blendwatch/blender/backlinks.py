@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from blendwatch.blender.library_writer import LibraryPathWriter, get_blend_file_libraries_fast
+# Import block-level optimizations for enhanced performance
+from blendwatch.blender.block_level_optimizations import SelectiveBlockReader, batch_scan_libraries
 from blendwatch.blender.cache import BlendFileCache
 from blendwatch.core.config import Config, load_default_config
 from blendwatch.utils.path_utils import resolve_path, is_path_ignored, find_files_by_extension
@@ -274,6 +276,134 @@ class BacklinkScanner:
             log.info(f"Found {len(backlinks)} backlinks for {target_asset.name}")
         
         return results
+    
+    def find_blend_files_optimized(self, force_refresh: bool = False) -> List[Path]:
+        """Find all .blend files with enhanced block-level pre-filtering.
+        
+        This optimized version uses block-level I/O to quickly identify which
+        files actually contain libraries before adding them to the scan list.
+        
+        Args:
+            force_refresh: If True, ignore cache and re-scan directory
+        
+        Returns:
+            List of paths to .blend files that contain libraries
+        """
+        # First get all blend files using the standard method
+        all_blend_files = self.find_blend_files(force_refresh)
+        
+        if not all_blend_files:
+            return []
+        
+        # Use block-level pre-filtering to only return files with libraries
+        files_with_libraries = []
+        for blend_file in all_blend_files:
+            try:
+                if SelectiveBlockReader.has_libraries(blend_file):
+                    files_with_libraries.append(blend_file)
+            except Exception as e:
+                log.debug(f"Error checking {blend_file} for libraries: {e}")
+                # Include file in results on error to be safe
+                files_with_libraries.append(blend_file)
+        
+        log.info(f"Pre-filtered {len(all_blend_files)} files to {len(files_with_libraries)} files with libraries")
+        return files_with_libraries
+    
+    def find_backlinks_to_file_optimized(self, target_asset: Union[str, Path], 
+                                        max_workers: int = 4, 
+                                        use_prefiltering: bool = True) -> List[BacklinkResult]:
+        """Find all blend files that link to the target asset with enhanced optimizations.
+        
+        This version uses advanced block-level optimizations:
+        1. Pre-filters files to only scan those with libraries
+        2. Uses batch scanning for better I/O efficiency
+        3. Implements selective block reading
+        
+        Args:
+            target_asset: Path to the asset to find backlinks for
+            max_workers: Number of threads to use for parallel processing
+            use_prefiltering: Whether to use block-level pre-filtering
+            
+        Returns:
+            List of BacklinkResult objects for files that link to the target
+        """
+        target_asset = resolve_path(str(target_asset))
+        start_time = time.time()
+        
+        # Use optimized file discovery if enabled
+        if use_prefiltering:
+            blend_files = self.find_blend_files_optimized()
+        else:
+            blend_files = self.find_blend_files()
+        
+        # Filter out the target file itself if it's a blend file
+        if target_asset.suffix.lower() == '.blend':
+            blend_files = [f for f in blend_files if f.resolve() != target_asset.resolve()]
+        
+        log.info(f"Checking {len(blend_files)} blend files for backlinks to {target_asset.name}")
+        
+        # Use batch scanning for better performance
+        if len(blend_files) > 10:  # Use batch scanning for larger file sets
+            batch_results = batch_scan_libraries(blend_files, max_workers=max_workers)
+            
+            # Convert batch results to BacklinkResult objects
+            backlinks = []
+            target_name = target_asset.name
+            target_str = str(target_asset)
+            
+            for blend_file, library_paths in batch_results.items():
+                matching_libraries = []
+                for lib_name, lib_path in library_paths.items():
+                    if (target_name in lib_path or 
+                        target_str in lib_path or
+                        str(target_asset) == lib_path):
+                        matching_libraries.append(lib_name)
+                
+                if matching_libraries:
+                    backlinks.append(BacklinkResult(
+                        blend_file=blend_file,
+                        library_paths=library_paths,
+                        matching_libraries=matching_libraries
+                    ))
+        else:
+            # Use standard cache-based approach for smaller file sets
+            linking_files = self.cache.get_files_linking_to(str(target_asset), blend_files)
+            
+            # Convert to BacklinkResult objects
+            backlinks = []
+            for blend_file in linking_files:
+                library_paths = self.cache.get_library_paths(blend_file)
+                if library_paths is None:
+                    continue
+                
+                # Find which libraries match
+                matching_libraries = []
+                target_name = target_asset.name
+                target_str = str(target_asset)
+                
+                for lib_name, lib_path in library_paths.items():
+                    if (target_name in lib_path or 
+                        target_str in lib_path or
+                        str(target_asset) == lib_path):
+                        matching_libraries.append(lib_name)
+                
+                if matching_libraries:
+                    backlinks.append(BacklinkResult(
+                        blend_file=blend_file,
+                        library_paths=library_paths,
+                        matching_libraries=matching_libraries
+                    ))
+        
+        duration = time.time() - start_time
+        
+        # Log performance metrics
+        stats = self.cache.get_stats() if hasattr(self, 'cache') else {}
+        hit_rate = stats.get('hit_rate_percent', 0)
+        log.info(f"Found {len(backlinks)} backlinks in {duration:.2f}s "
+                f"(cache hit rate: {hit_rate}%, pre-filtering: {use_prefiltering})")
+        
+        return backlinks
+    
 
 
 def find_backlinks(target_asset: Union[str, Path], 
