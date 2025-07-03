@@ -7,7 +7,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-from blendwatch.config import Config, load_config, load_default_config, load_default_config
+from blendwatch.core.config import Config, load_config, load_default_config
 
 
 class TestConfig:

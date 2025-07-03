@@ -12,8 +12,10 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
-from blendwatch.cli import main, watch, init_config
-from blendwatch.library_writer import LibraryPathWriter
+from blendwatch.cli import main
+from blendwatch.cli.commands.watch import watch_command
+from blendwatch.cli.commands.init_config import init_config_command
+from blendwatch.blender.library_writer import LibraryPathWriter
 
 
 class TestCLI:
@@ -124,7 +126,7 @@ class TestCLI:
     @patch('blendwatch.cli.load_config')
     def test_watch_with_config(self, mock_load_config, mock_sleep, mock_watcher_class):
         """Test watch command with configuration file"""
-        from blendwatch.config import Config
+        from blendwatch.core.config import Config
         
         # Mock config loading
         mock_config = Config(
@@ -362,7 +364,7 @@ class TestBacklinksCommand:
     @patch('blendwatch.cli.BacklinkScanner')
     @patch('blendwatch.cli.load_default_config')
     def test_backlinks_json_output(self, mock_load_default, mock_scanner, tmp_path):
-        from blendwatch.config import Config
+        from blendwatch.core.config import Config
         mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])
         result_obj = SimpleNamespace(
             blend_file=tmp_path / 'file.blend',
@@ -382,7 +384,7 @@ class TestBacklinksCommand:
     @patch('blendwatch.cli.BacklinkScanner')
     @patch('blendwatch.cli.load_default_config')
     def test_backlinks_table_verbose(self, mock_load_default, mock_scanner, tmp_path):
-        from blendwatch.config import Config
+        from blendwatch.core.config import Config
         mock_load_default.return_value = Config(extensions=['.blend'], ignore_dirs=[])
         result_obj = SimpleNamespace(
             blend_file=tmp_path / 'file.blend',

@@ -18,7 +18,7 @@ from watchdog.events import (
     DirCreatedEvent
 )
 
-from blendwatch.watcher import FileWatcher, MoveTrackingHandler
+from blendwatch.core.watcher import FileWatcher, MoveTrackingHandler
 
 
 class TestMoveTrackingHandler:

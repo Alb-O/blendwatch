@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from blendwatch.library_writer import (
+from blendwatch.blender.library_writer import (
     LibraryPathWriter, 
     update_blend_file_paths, 
     get_blend_file_libraries

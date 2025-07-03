@@ -7,12 +7,12 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from blendwatch.backlinks import (
+from blendwatch.blender.backlinks import (
     BacklinkScanner,
     BacklinkResult,
     find_backlinks
 )
-from blendwatch.config import Config
+from blendwatch.core.config import Config
 
 
 class TestBacklinkScanner:

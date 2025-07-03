@@ -10,8 +10,8 @@ from threading import Thread
 
 import pytest
 
-from blendwatch.watcher import FileWatcher
-from blendwatch.config import Config, load_config
+from blendwatch.core.watcher import FileWatcher
+from blendwatch.core.config import Config, load_config
 
 
 class TestIntegration:

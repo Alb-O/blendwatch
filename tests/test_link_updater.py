@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from blendwatch.link_updater import parse_move_log, apply_move_log
+from blendwatch.blender.link_updater import parse_move_log, apply_move_log
 
 
 def test_parse_move_log_valid_and_invalid(tmp_path):

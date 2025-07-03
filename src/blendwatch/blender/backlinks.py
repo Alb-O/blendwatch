@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Set, NamedTuple, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .library_writer import LibraryPathWriter
-from .config import Config, load_default_config
+from blendwatch.blender.library_writer import LibraryPathWriter
+from blendwatch.core.config import Config, load_default_config
 
 log = logging.getLogger(__name__)
 

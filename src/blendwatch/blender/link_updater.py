@@ -7,8 +7,8 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Tuple, Union
 
-from .backlinks import BacklinkScanner
-from .library_writer import LibraryPathWriter
+from blendwatch.blender.backlinks import BacklinkScanner
+from blendwatch.blender.library_writer import LibraryPathWriter
 
 log = logging.getLogger(__name__)
 
