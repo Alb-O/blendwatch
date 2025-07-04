@@ -421,7 +421,73 @@ class MoveTrackingHandler(FileSystemEventHandler):
                 }
                 return False
             else:
-                # This is a create event - look for matching delete events
+                # This is a create event - first check for move chains before correlation
+                if not event_data['is_directory']:
+                    # Check if this file was already processed as part of a directory move
+                    # Normalize paths for comparison (handle Windows/Unix path differences)
+                    normalized_path = str(Path(event_data['path']))
+                    
+                    processed_match = False
+                    for processed_path in self.directory_processed_files:
+                        if str(Path(processed_path)) == normalized_path:
+                            file_processed_time = self.directory_processed_files[processed_path]
+                            if current_time - file_processed_time < self.event_correlation_timeout * 2:
+                                processed_match = True
+                                if self.verbose:
+                                    print(f"[CORRELATION] Skipping chain move detection for {event_data['path']} - already processed as part of directory move")
+                                break
+                    
+                    if not processed_match:
+                        # Check if this might be a move from a recent location (move chain detection)
+                        recent_locations = []
+                        
+                        # Look through recently processed files for the same filename
+                        for processed_path, processed_time in list(self.directory_processed_files.items()):
+                            if (current_time - processed_time < self.event_correlation_timeout * 2 and
+                                Path(processed_path).name == file_name and
+                                str(Path(processed_path)) != normalized_path):
+                                recent_locations.append(processed_path)
+                        
+                        # Also check recent move events for the same filename
+                        for move_event in reversed(self.move_events[-10:]):  # Check last 10 events
+                            if (move_event.get('new_name') == file_name and 
+                                str(Path(move_event.get('new_path', ''))) != normalized_path):
+                                try:
+                                    # Parse timestamp and check if recent
+                                    event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
+                                    if (current_time - event_time.timestamp()) < self.event_correlation_timeout * 2:
+                                        recent_locations.append(move_event['new_path'])
+                                except (ValueError, KeyError):
+                                    continue
+                        
+                        # If we found recent locations for this file, create a move event from the most recent one
+                        if recent_locations:
+                            most_recent_location = recent_locations[0]  # Take the first (most recent due to iteration order)
+                            
+                            if self.verbose:
+                                print(f"[CORRELATION] Creating move event from recent location: {most_recent_location} -> {event_data['path']}")
+                            
+                            # Create a move event from the recent location
+                            move_event = {
+                                'timestamp': event_data['timestamp'],
+                                'type': 'file_moved',
+                                'old_path': most_recent_location,
+                                'new_path': event_data['path'],
+                                'old_name': Path(most_recent_location).name,
+                                'new_name': file_name,
+                                'is_directory': False,
+                                'correlated': True,
+                                'chain_move': True  # Mark as a chained move
+                            }
+                            
+                            # Check if it's a rename (same parent) or move
+                            if Path(most_recent_location).parent == Path(event_data['path']).parent:
+                                move_event['type'] = 'file_renamed'
+                            
+                            self.log_event(move_event)
+                            return True
+
+                # No chain move found - look for matching delete events
                 if self.verbose:
                     print(f"[CORRELATION] Looking for delete match for create event {event_data['path']}")
                     print(f"[CORRELATION] Current pending deletes: {list(self.pending_deletes.keys())}")
