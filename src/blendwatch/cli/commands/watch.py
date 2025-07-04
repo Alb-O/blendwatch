@@ -21,7 +21,7 @@ from blendwatch.cli.utils import load_config_with_fallback
 @click.option('--ignore-dirs', '-i', multiple=True,
               help='Directory patterns to ignore (regex supported)')
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--output', '-o', type=click.Path(),
               help='Output file to log changes (default: blendwatch.log)')
 @click.option('--verbose', '-v', is_flag=True,
@@ -108,7 +108,7 @@ def watch_command(path: str, extensions: tuple, ignore_dirs: tuple, config: Opti
 @click.option('--ignore-dirs', '-i', multiple=True,
               help='Directory patterns to ignore (regex supported)')
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--output', '-o', type=click.Path(),
               help='Output file to log changes (default: blendwatch.log)')
 @click.option('--verbose', '-v', is_flag=True,

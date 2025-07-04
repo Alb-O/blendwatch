@@ -20,7 +20,7 @@ from blendwatch.cli.utils import load_config_with_fallback, check_file_exists, c
 @click.argument('target_asset', type=click.Path())
 @click.argument('search_directory', type=click.Path(), default='.', required=False)
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--max-workers', '-w', default=4, type=int,
               help='Number of parallel threads for scanning (default: 4)')
 @click.option('--output-format', '-f', 
@@ -114,7 +114,7 @@ def backlinks_command(target_asset: str, search_directory: str, config: Optional
 @click.argument('target_asset', type=click.Path())
 @click.argument('search_directory', type=click.Path(), default='.', required=False)
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--max-workers', '-w', default=4, type=int,
               help='Number of parallel threads for scanning (default: 4)')
 @click.option('--output-format', '-f', 

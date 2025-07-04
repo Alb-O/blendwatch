@@ -21,7 +21,7 @@ from blendwatch.cli.utils import load_config_with_fallback, handle_cli_exception
 @click.option('--update-dir', type=click.Path(), 
               help='Directory to update links in (default: same as watch path)')
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
 @click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
@@ -119,7 +119,7 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
 @click.option('--update-dir', type=click.Path(), 
               help='Directory to update links in (default: same as watch path)')
 @click.option('--config', '-c', type=click.Path(),
-              help='Path to configuration file (TOML or JSON)')
+              help='Path to configuration file (TOML)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.option('--dry-run', is_flag=True, help='Show what would be updated without making changes')
 @click.option('--relative', is_flag=True, help='Write library paths in relative format (e.g., //path/to/file.blend)')
