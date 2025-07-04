@@ -73,15 +73,6 @@ def watch_command(path: str, extensions: tuple, ignore_dirs: tuple, config: Opti
     if output:
         click.echo(f"{Fore.CYAN}Output file: {output}{Style.RESET_ALL}")
     
-    # Get event correlation timeout from config
-    correlation_timeout = 2.0  # default
-    if config_obj and hasattr(config_obj, 'debounce_delay'):
-        correlation_timeout = float(config_obj.debounce_delay)
-    elif default_config and hasattr(default_config, 'debounce_delay'):
-        correlation_timeout = float(default_config.debounce_delay)
-    
-    click.echo(f"{Fore.CYAN}Event correlation timeout: {correlation_timeout}s{Style.RESET_ALL}")
-    
     # Create and start the file watcher
     watcher = FileWatcher(
         watch_path=str(watch_path),
@@ -89,8 +80,7 @@ def watch_command(path: str, extensions: tuple, ignore_dirs: tuple, config: Opti
         ignore_dirs=ignore_patterns,
         output_file=output,
         verbose=verbose,
-        recursive=recursive,
-        event_correlation_timeout=correlation_timeout
+        recursive=recursive
     )
     
     try:

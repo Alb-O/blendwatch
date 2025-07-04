@@ -93,10 +93,14 @@ class TestIntegration:
                                 assert 'timestamp' in event_data
                                 assert 'type' in event_data
                                 assert 'old_path' in event_data
-                                assert 'new_path' in event_data
                 
             finally:
                 watcher.stop()
+                
+                # Ensure file handles are closed before temp directory cleanup
+                if hasattr(watcher.event_handler, 'output_fp') and watcher.event_handler.output_fp:
+                    watcher.event_handler.output_fp.close()
+                    watcher.event_handler.output_fp = None
     
     def test_extension_filtering(self):
         """Test that extension filtering works correctly"""

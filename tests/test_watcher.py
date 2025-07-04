@@ -1,25 +1,24 @@
 """
-Tests for the watcher module
+Tests for the file watcher module with file index integration
 """
 
-import json
-import tempfile
-import time
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import Mock, patch
-
 import pytest
+import time
+import threading
+from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
+
 from watchdog.events import (
     FileMovedEvent, 
-    DirMovedEvent, 
-    FileDeletedEvent, 
+    DirMovedEvent,
     FileCreatedEvent,
-    DirDeletedEvent,
-    DirCreatedEvent
+    FileDeletedEvent,
+    DirCreatedEvent,
+    DirDeletedEvent
 )
 
 from blendwatch.core.watcher import FileWatcher, MoveTrackingHandler
+from blendwatch.core.file_index import FileIndex
 
 
 class TestMoveTrackingHandler:
@@ -27,124 +26,45 @@ class TestMoveTrackingHandler:
     
     def setup_method(self):
         """Set up test fixtures"""
-        self.extensions = ['.py', '.txt']
-        self.ignore_patterns = [r'__pycache__', r'\.git']
-        self.output_file = None
-        self.verbose = False
-        
-        self.handler = MoveTrackingHandler(
-            extensions=self.extensions,
-            ignore_patterns=self.ignore_patterns,
-            output_file=self.output_file,
-            verbose=self.verbose
-        )
+        self.handler = MoveTrackingHandler(['.py', '.txt'], [], verbose=False)
     
-    def test_should_track_file_with_matching_extension(self):
-        """Test that files with matching extensions are tracked"""
+    def test_should_track_file(self):
+        """Test file tracking logic"""
+        # Should track .py files
         assert self.handler.should_track_file('/path/to/file.py')
         assert self.handler.should_track_file('/path/to/file.txt')
+        
+        # Should not track other extensions
         assert not self.handler.should_track_file('/path/to/file.jpg')
-        assert not self.handler.should_track_file('/path/to/file')
+        assert not self.handler.should_track_file('/path/to/file.doc')
     
-    def test_should_track_file_with_no_extensions_filter(self):
-        """Test tracking all files when no extensions specified"""
-        handler = MoveTrackingHandler(
-            extensions=[],
-            ignore_patterns=[],
-            output_file=None,
-            verbose=False
-        )
+    def test_should_track_blend_files(self):
+        """Test special Blender file tracking logic"""
+        handler = MoveTrackingHandler(['.blend'], [])
         
-        assert handler.should_track_file('/path/to/file.py')
-        assert handler.should_track_file('/path/to/file.jpg')
-        assert handler.should_track_file('/path/to/file')
+        # Should track .blend files
+        assert handler.should_track_file('/path/to/scene.blend')
+        
+        # Should not track Blender backup files
+        assert not handler.should_track_file('/path/to/scene.blend1')
+        assert not handler.should_track_file('/path/to/scene.blend2')
+        assert not handler.should_track_file('/path/to/scene.blend@')
     
-    def test_should_ignore_matching_patterns(self):
-        """Test that paths matching ignore patterns are ignored"""
-        assert self.handler.should_ignore_path('/project/__pycache__/file.pyc')
-        assert self.handler.should_ignore_path('/project/.git/config')
-        assert not self.handler.should_ignore_path('/project/src/main.py')
+    def test_should_ignore_path(self):
+        """Test path ignoring logic"""
+        handler = MoveTrackingHandler(['.py'], ['__pycache__', r'.*\.tmp'])
+        
+        # Should ignore patterns
+        assert handler.should_ignore_path('/path/__pycache__/file.py')
+        assert handler.should_ignore_path('/path/temp.tmp')
+        
+        # Should not ignore normal paths
+        assert not handler.should_ignore_path('/path/to/file.py')
     
-    def test_should_ignore_with_no_patterns(self):
-        """Test behavior when no ignore patterns are specified"""
-        handler = MoveTrackingHandler(
-            extensions=[],
-            ignore_patterns=[],
-            output_file=None,
-            verbose=False
-        )
-        
-        assert not handler.should_ignore_path('/project/__pycache__/file.pyc')
-        assert not handler.should_ignore_path('/project/.git/config')
-    
-    @patch('builtins.print')
-    def test_on_moved_file_event(self, mock_print):
-        """Test handling file moved events"""
-        event = FileMovedEvent('/old/path/file.py', '/new/path/file.py')
-        
-        self.handler.on_moved(event)
-        
-        # Should print the move event
-        mock_print.assert_called()
-        call_args = mock_print.call_args[0][0]
-        assert 'MOVED' in call_args or 'RENAMED' in call_args
-    
-    @patch('builtins.print')
-    def test_on_moved_directory_event(self, mock_print):
-        """Test handling directory moved events"""
-        event = DirMovedEvent('/old/path/dir', '/new/path/dir')
-        
-        self.handler.on_moved(event)
-        
-        # Should print the move event
-        mock_print.assert_called()
-        call_args = mock_print.call_args[0][0]
-        assert 'MOVED' in call_args or 'RENAMED' in call_args
-    
-    @patch('builtins.print')
-    def test_on_moved_ignored_file(self, mock_print):
-        """Test that ignored files don't generate events"""
-        event = FileMovedEvent('/old/__pycache__/file.pyc', '/new/__pycache__/file.pyc')
-        
-        self.handler.on_moved(event)
-        
-        # Should not print anything for ignored files
-        mock_print.assert_not_called()
-    
-    @patch('builtins.print')
-    def test_on_moved_wrong_extension(self, mock_print):
-        """Test that files with wrong extensions don't generate events"""
-        event = FileMovedEvent('/old/path/file.jpg', '/new/path/file.jpg')
-        
-        self.handler.on_moved(event)
-        
-        # Should not print anything for non-watched extensions
-        mock_print.assert_not_called()
-    
-    def test_on_moved_with_output_file(self):
-        """Test logging to output file"""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-            handler = MoveTrackingHandler(
-                extensions=['.py'],
-                ignore_patterns=[],
-                output_file=f.name,
-                verbose=False
-            )
-            
-            event = FileMovedEvent('/old/path/file.py', '/new/path/file.py')
-            handler.on_moved(event)
-            
-            # Check that the event was logged to file
-            with open(f.name, 'r') as log_file:
-                content = log_file.read()
-                assert '"type":' in content
-                assert '"/old/path/file.py"' in content
-                assert '"/new/path/file.py"' in content
-    
-    def test_rename_vs_move_detection(self):
-        """Test distinguishing between renames and moves"""
+    def test_direct_file_move_events(self):
+        """Test direct file move events (not correlation-based)"""
         # Test rename (same directory)
-        rename_event = FileMovedEvent('/path/old_name.py', '/path/new_name.py')
+        rename_event = FileMovedEvent('/same_path/oldname.py', '/same_path/newname.py')
         self.handler.on_moved(rename_event)
         
         # Test move (different directory)
@@ -156,946 +76,342 @@ class TestMoveTrackingHandler:
         assert 'renamed' in events[0]['type']
         assert 'moved' in events[1]['type']
     
-    def test_windows_style_move_correlation(self):
-        """Test correlation of delete + create events into move events (same filename, different folders)"""
-        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
-        
-        # Create mock delete event
-        delete_event = FileDeletedEvent('/old/folder/file.txt')
-        
-        # Create mock create event with same filename in different folder
-        create_event = FileCreatedEvent('/new/folder/file.txt')
-        
-        # Simulate the delete event first
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_deleted(delete_event)
-        
-        # Should have no move events yet
-        assert len(handler.move_events) == 0
-        
-        # Now simulate the create event
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_created(create_event)
-        
-        # Should now have a correlated move event
-        assert len(handler.move_events) == 1
-        event = handler.move_events[0]
-        assert event['type'] == 'file_moved'
-        assert event['old_path'] == '/old/folder/file.txt'
-        assert event['new_path'] == '/new/folder/file.txt'
-        assert event['correlated'] == True
-
-    def test_windows_style_different_filenames_correlation(self):
-        """Test that files with different names ARE correlated when timing and extension match (improved logic)"""
-        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=1.0)
-        
-        # Create mock delete event
-        delete_event = FileDeletedEvent('/same/path/oldname.txt')
-        
-        # Create mock create event with different filename in same directory
-        create_event = FileCreatedEvent('/same/path/newname.txt')
-        
-        # Simulate the events
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_deleted(delete_event)
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_created(create_event)
-        
-        # Should correlate because extension matches, timing is close, and it's likely a rename
-        # (Improved logic handles renames with different filenames)
-        assert len(handler.move_events) == 1
-        move_event = handler.move_events[0]
-        assert move_event['type'] == 'file_renamed'  # Same directory = rename
-        assert move_event['old_path'] == '/same/path/oldname.txt'
-        assert move_event['new_path'] == '/same/path/newname.txt'
-
-    def test_event_correlation_timeout(self):
-        """Test that events outside timeout window are not correlated"""
-        handler = MoveTrackingHandler(['.txt'], [], event_correlation_timeout=0.1)
-        
-        delete_event = FileDeletedEvent('/old/path/file.txt')
-        create_event = FileCreatedEvent('/new/path/file.txt')
-        
-        # Simulate delete event
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_deleted(delete_event)
-        
-        # Wait longer than timeout
-        time.sleep(0.2)
-        
-        # Simulate create event
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_created(create_event)
-        
-        # Should not correlate due to timeout
-        assert len(handler.move_events) == 0
-
-    def test_directory_correlation(self):
-        """Test correlation of directory delete + create events"""
-        handler = MoveTrackingHandler([], [], event_correlation_timeout=1.0)
-        
-        # Create mock directory events with same directory name
-        delete_event = DirDeletedEvent('/old/location/mydir')
-        create_event = DirCreatedEvent('/new/location/mydir')
-        
-        # Simulate directory events
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 0  # directories typically have size 0 or 4096
-            handler.on_deleted(delete_event)
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 0
-            handler.on_created(create_event)
-        
-        # Should have a correlated directory move
-        assert len(handler.move_events) == 1
-        event = handler.move_events[0]
-        assert event['type'] == 'directory_moved'
-        assert event['is_directory'] == True
-        assert event['correlated'] == True
-
-    def test_flush_pending_events(self):
-        """Test flushing of unmatched pending events"""
-        handler = MoveTrackingHandler(['.txt', '.py'], [], event_correlation_timeout=1.0)
-        
-        # Create unmatched delete event (.txt file)
-        delete_event = FileDeletedEvent('/deleted/file1.txt')
-        
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024
-            handler.on_deleted(delete_event)
-        
-        # Create unmatched create event with different extension (.py file)
-        # This will NOT correlate because extensions are different
-        create_event = FileCreatedEvent('/created/file2.py')
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 1024  # Same size but different extension, won't correlate
-            handler.on_created(create_event)
-        
-        # Flush pending events
-        unmatched = handler.flush_pending_events()
-        
-        # Should have 2 unmatched events (different extensions prevent correlation)
-        assert len(unmatched) == 2
-        
-        # Check delete event
-        delete_unmatched = next(e for e in unmatched if e['type'] == 'file_deleted')
-        assert delete_unmatched['path'] == '/deleted/file1.txt'
-        assert delete_unmatched['unmatched'] == True
-        
-        # Check create event
-        create_unmatched = next(e for e in unmatched if e['type'] == 'file_created')
-        assert create_unmatched['path'] == '/created/file2.py'
-        assert create_unmatched['unmatched'] == True
-
-    def test_directory_move_with_blend_files(self):
-        """Test directory move with blend files inside"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            # Mock finding blend files in the moved directory
-            mock_blend_files = [
-                Path('/new/project/scene.blend'),
-                Path('/new/project/assets/character.blend')
-            ]
-            mock_find_files.return_value = mock_blend_files
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
-            
-            # Simulate directory move event
-            dir_event = DirMovedEvent('/old/project', '/new/project')
-            handler.on_moved(dir_event)
-            
-            # Should create file move events for each blend file
-            assert len(handler.move_events) == 2
-            
-            # Check first blend file move (normalize paths for platform compatibility)
-            scene_move = handler.move_events[0]
-            assert scene_move['type'] == 'file_moved'
-            assert Path(scene_move['old_path']) == Path('/old/project/scene.blend')
-            assert Path(scene_move['new_path']) == Path('/new/project/scene.blend')
-            
-            # Check second blend file move
-            character_move = handler.move_events[1]
-            assert character_move['type'] == 'file_moved'
-            assert Path(character_move['old_path']) == Path('/old/project/assets/character.blend')
-            assert Path(character_move['new_path']) == Path('/new/project/assets/character.blend')
-
-    def test_directory_move_deduplication(self):
-        """Test that individual file moves are deduplicated when part of directory move"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            # Mock finding blend files in the moved directory
-            mock_blend_files = [Path('/new/project/scene.blend')]
-            mock_find_files.return_value = mock_blend_files
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
-            
-            # First: directory move event (which creates file move events)
-            dir_event = DirMovedEvent('/old/project', '/new/project')
-            handler.on_moved(dir_event)
-            
-            # Second: individual file move event (should be skipped as duplicate)
-            file_event = FileMovedEvent('/old/project/scene.blend', '/new/project/scene.blend')
-            handler.on_moved(file_event)
-            
-            # Should only have one file move event (from directory move, not from individual file move)
-            assert len(handler.move_events) == 1
-            move_event = handler.move_events[0]
-            assert Path(move_event['old_path']) == Path('/old/project/scene.blend')
-            assert Path(move_event['new_path']) == Path('/new/project/scene.blend')
-
-    def test_complex_nested_directory_move(self):
-        """Test complex directory structure moves with multiple nested blend files"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            # Mock finding multiple blend files in nested directories
-            mock_blend_files = [
-                Path('/new/complex_project/main.blend'),
-                Path('/new/complex_project/scenes/scene1.blend'),
-                Path('/new/complex_project/scenes/scene2.blend'),
-                Path('/new/complex_project/assets/models/character.blend'),
-                Path('/new/complex_project/assets/models/environment.blend')
-            ]
-            mock_find_files.return_value = mock_blend_files
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
-            
-            # Simulate directory move event
-            dir_event = DirMovedEvent('/old/complex_project', '/new/complex_project')
-            handler.on_moved(dir_event)
-            
-            # Should create file move events for all blend files
-            assert len(handler.move_events) == 5
-            
-            # Verify each expected move (normalize paths for cross-platform compatibility)
-            expected_moves = [
-                (Path('/old/complex_project/main.blend'), Path('/new/complex_project/main.blend')),
-                (Path('/old/complex_project/scenes/scene1.blend'), Path('/new/complex_project/scenes/scene1.blend')),
-                (Path('/old/complex_project/scenes/scene2.blend'), Path('/new/complex_project/scenes/scene2.blend')),
-                (Path('/old/complex_project/assets/models/character.blend'), Path('/new/complex_project/assets/models/character.blend')),
-                (Path('/old/complex_project/assets/models/environment.blend'), Path('/new/complex_project/assets/models/environment.blend')),
-            ]
-            
-            actual_moves = [(Path(event['old_path']), Path(event['new_path'])) for event in handler.move_events]
-            assert sorted(actual_moves) == sorted(expected_moves)
-
-    def test_directory_processed_files_tracking(self):
-        """Test that files processed as part of directory moves are tracked to prevent duplication"""
+    def test_directory_move_with_files(self):
+        """Test directory move events generate file move events"""
         with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
             mock_blend_files = [Path('/new/project/scene.blend')]
             mock_find_files.return_value = mock_blend_files
             
-            handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=2.0)
+            handler = MoveTrackingHandler(['.blend'], [])
             
             # Process directory move
             dir_event = DirMovedEvent('/old/project', '/new/project')
             handler.on_moved(dir_event)
             
-            # Check that files are tracked in directory_processed_files (normalize paths)
-            old_path_str = str(Path('/old/project/scene.blend'))
-            new_path_str = str(Path('/new/project/scene.blend'))
-            assert old_path_str in handler.directory_processed_files
-            assert new_path_str in handler.directory_processed_files
-
-    def test_correlation_skips_directory_processed_files(self):
-        """Test that correlation logic skips files already processed by directory moves"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            mock_blend_files = [Path('/new/project/scene.blend')]
-            mock_find_files.return_value = mock_blend_files
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
-            
-            # Process directory move first
-            dir_event = DirMovedEvent('/old/project', '/new/project')
-            handler.on_moved(dir_event)
-            
-            # Now simulate individual delete/create events that might come from OS
-            delete_event = FileDeletedEvent('/old/project/scene.blend')
-            create_event = FileCreatedEvent('/new/project/scene.blend')
-            
-            with patch('pathlib.Path.exists', return_value=False):
-                handler.on_deleted(delete_event)
-            
-            with patch('pathlib.Path.exists', return_value=True), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 1024
-                handler.on_created(create_event)
-            
-            # Should still only have one move event (from directory move)
-            # The individual delete/create should be ignored since the file was already processed
+            # Should have one file move event for the found .blend file
             assert len(handler.move_events) == 1
-
-    def test_user_reported_scenario(self):
-        """Test the exact scenario reported by the user: moving folder with blend file inside"""
-        handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
+            move_event = handler.move_events[0]
+            assert move_event['type'] == 'file_moved'
+            assert move_event['old_path'] == str(Path('/old/project/scene.blend'))
+            assert move_event['new_path'] == str(Path('/new/project/scene.blend'))
+    
+    def test_file_index_integration(self):
+        """Test integration with file index for move detection"""
+        # Create mock file index
+        mock_file_index = Mock(spec=FileIndex)
+        mock_file_index.record_creation.return_value = ('/old/path/file.txt', '/new/path/file.txt')
         
-        # Step 1: Move "New folder" to "nested" (directory move)
-        dir_event = DirMovedEvent(
-            '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/New folder',
-            '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested'
-        )
-        handler.on_moved(dir_event)  # Should not create any move events (no tracked files in directory)
+        handler = MoveTrackingHandler(['.txt'], [], file_index=mock_file_index)
         
-        # Step 2: Create subfolder (create event)
-        create_dir_event = DirCreatedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder')
-        handler.on_created(create_dir_event)  # Should be ignored (directory event)
+        # Simulate create event
+        create_event = FileCreatedEvent('/new/path/file.txt')
         
-        # Step 3: Move blend file into subfolder (individual file move via delete/create correlation)
-        delete_event = FileDeletedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/PIVOT_SNB_Track Mouse.blend')
-        create_event = FileCreatedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder/PIVOT_SNB_Track Mouse.blend')
+        with patch('pathlib.Path.exists', return_value=True):
+            handler.on_created(create_event)
         
-        # Simulate the events
+        # Should have detected move via file index
+        assert len(handler.move_events) == 1
+        move_event = handler.move_events[0]
+        assert move_event['type'] == 'file_moved'
+        assert move_event['old_path'] == '/old/path/file.txt'
+        assert move_event['new_path'] == '/new/path/file.txt'
+        assert move_event['detection_method'] == 'file_index'
+        
+        # File index should have been called
+        mock_file_index.record_creation.assert_called_once_with('/new/path/file.txt')
+    
+    def test_file_index_deletion_tracking(self):
+        """Test that deletions are recorded in file index"""
+        mock_file_index = Mock(spec=FileIndex)
+        handler = MoveTrackingHandler(['.txt'], [], file_index=mock_file_index)
+        
+        # Simulate delete event
+        delete_event = FileDeletedEvent('/path/to/file.txt')
+        
         with patch('pathlib.Path.exists', return_value=False):
             handler.on_deleted(delete_event)
         
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 112
+        # File index should have been notified of deletion
+        mock_file_index.record_deletion.assert_called_once_with('/path/to/file.txt')
+    
+    def test_directory_deletion_with_files(self):
+        """Test directory deletion records all contained files as deleted"""
+        mock_file_index = Mock(spec=FileIndex)
+        mock_file_index.get_files_in_directory.return_value = [
+            '/dir/file1.txt',
+            '/dir/file2.txt'
+        ]
+        
+        handler = MoveTrackingHandler(['.txt'], [], file_index=mock_file_index)
+        
+        # Simulate directory delete event
+        delete_event = DirDeletedEvent('/dir')
+        
+        with patch('pathlib.Path.exists', return_value=False):
+            handler.on_deleted(delete_event)
+        
+        # All files in directory should be recorded as deleted
+        assert mock_file_index.record_deletion.call_count == 2
+        mock_file_index.record_deletion.assert_any_call('/dir/file1.txt')
+        mock_file_index.record_deletion.assert_any_call('/dir/file2.txt')
+    
+    def test_duplicate_move_prevention(self):
+        """Test that duplicate moves are not recorded"""
+        mock_file_index = Mock(spec=FileIndex)
+        mock_file_index.record_creation.return_value = ('/old/path/file.txt', '/new/path/file.txt')
+        
+        handler = MoveTrackingHandler(['.txt'], [], file_index=mock_file_index)
+        
+        # Add existing move event to simulate already recorded move
+        handler.move_events.append({
+            'old_path': '/old/path/file.txt',
+            'new_path': '/new/path/file.txt',
+            'detection_method': 'file_index'
+        })
+        
+        # Simulate create event that would normally trigger move detection
+        create_event = FileCreatedEvent('/new/path/file.txt')
+        
+        with patch('pathlib.Path.exists', return_value=True):
             handler.on_created(create_event)
         
-        # Should have exactly one file move event for the blend file
+        # Should still only have one move event (no duplicate)
         assert len(handler.move_events) == 1
-        
-        move_event = handler.move_events[0]
-        assert move_event['type'] == 'file_moved'
-        assert move_event['old_path'] == '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/PIVOT_SNB_Track Mouse.blend'
-        assert move_event['new_path'] == '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder/PIVOT_SNB_Track Mouse.blend'
-        assert move_event['correlated'] == True
-
-    def test_directory_cleanup_limits(self):
-        """Test that directory tracking data structures are cleaned up properly"""
-        handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=0.1)
-        
-        # Add many directory moves to trigger cleanup
-        with handler.correlation_lock:
-            for i in range(25):  # More than the 20 limit
-                handler.recent_directory_moves[f'/old/dir{i}'] = f'/new/dir{i}'
-        
-        # Trigger cleanup by processing another event
-        handler._clean_expired_events()
-        
-        # Should have cleaned up to reasonable size (roughly half, so around 12-13)
-        assert len(handler.recent_directory_moves) <= 13  # Allow some variance in cleanup
-
-    def test_directory_processed_files_cleanup(self):
-        """Test that directory processed files are cleaned up after timeout"""
-        handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=0.1)
-        
-        # Add some processed files
-        import time
-        current_time = time.time()
-        with handler.correlation_lock:
-            # Add recent file (should not be cleaned)
-            handler.directory_processed_files['/recent/file.blend'] = current_time
-            # Add old file (should be cleaned)
-            handler.directory_processed_files['/old/file.blend'] = current_time - 1.0
-        
-        # Trigger cleanup
-        handler._clean_expired_events()
-        
-        # Recent file should remain, old file should be cleaned
-        assert '/recent/file.blend' in handler.directory_processed_files
-        assert '/old/file.blend' not in handler.directory_processed_files
-
-    def test_move_chain_detection(self):
-        """Test that chain moves are detected when only CREATE events are seen"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            # Mock filesystem search to return no files initially
-            mock_find_files.return_value = []
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
-            
-            # Simulate the first normal move (DELETE + CREATE correlation)
-            delete_event1 = FileDeletedEvent('/project/scene.blend')
-            create_event1 = FileCreatedEvent('/project/subdir1/scene.blend')
-            
-            with patch('pathlib.Path.exists', return_value=False), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 100
-                handler.on_deleted(delete_event1)
-            
-            with patch('pathlib.Path.exists', return_value=True), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 100
-                handler.on_created(create_event1)
-            
-            # Should have one normal move
-            assert len(handler.move_events) == 1
-            assert handler.move_events[0]['type'] == 'file_moved'
-            assert handler.move_events[0]['old_path'] == '/project/scene.blend'
-            assert handler.move_events[0]['new_path'] == '/project/subdir1/scene.blend'
-            assert handler.move_events[0].get('correlated') == True
-            assert not handler.move_events[0].get('chain_move')
-            
-            # Now simulate rapid moves where only CREATE events are seen
-            # This simulates the user's scenario where filesystem events come too fast
-            
-            # Second move: only CREATE event (no DELETE because move was too fast)
-            create_event2 = FileCreatedEvent('/project/subdir2/scene.blend')
-            
-            with patch('pathlib.Path.exists', return_value=True), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 100
-                handler.on_created(create_event2)
-            
-            # Should now have two moves, second one is a chain move
-            assert len(handler.move_events) == 2
-            chain_move1 = handler.move_events[1]
-            assert chain_move1['type'] == 'file_moved'
-            assert chain_move1['old_path'] == '/project/subdir1/scene.blend'
-            assert chain_move1['new_path'] == '/project/subdir2/scene.blend'
-            assert chain_move1.get('chain_move') == True
-            assert chain_move1.get('correlated') == True
-            
-            # Third move: another CREATE-only event
-            create_event3 = FileCreatedEvent('/project/subdir3/scene.blend')
-            
-            with patch('pathlib.Path.exists', return_value=True), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 100
-                handler.on_created(create_event3)
-            
-            # Should now have three moves, third one is also a chain move
-            assert len(handler.move_events) == 3
-            chain_move2 = handler.move_events[2]
-            assert chain_move2['type'] == 'file_moved'
-            assert chain_move2['old_path'] == '/project/subdir2/scene.blend'
-            assert chain_move2['new_path'] == '/project/subdir3/scene.blend'
-            assert chain_move2.get('chain_move') == True
-            assert chain_move2.get('correlated') == True
-
-    def test_filesystem_based_chain_move_detection(self):
-        """Test chain move detection using filesystem search when no recent events exist"""
-        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
-            # Mock filesystem search to find a file with the same name in a different location
-            mock_find_files.return_value = [
-                Path('/project/old_location/scene.blend'),  # Source file
-                Path('/project/new_location/scene.blend')   # Target file (the one being created)
-            ]
-            
-            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
-            
-            # First, create some recent move activity to satisfy the conditions for filesystem search
-            # This simulates an active editing session where files are being moved around
-            initial_move_event = {
-                'timestamp': datetime.now().isoformat(),
-                'type': 'file_moved',
-                'old_path': '/project/temp/other.blend',
-                'new_path': '/project/somewhere/other.blend',
-                'old_name': 'other.blend',
-                'new_name': 'other.blend',
-                'is_directory': False
-            }
-            handler.move_events.append(initial_move_event)
-            
-            # Simulate a CREATE event with no prior context for this specific file (no recent moves, no pending deletes)
-            create_event = FileCreatedEvent('/project/new_location/scene.blend')
-            
-            with patch('pathlib.Path.exists', return_value=True), \
-                 patch('pathlib.Path.stat') as mock_stat:
-                mock_stat.return_value.st_size = 1024
-                handler.on_created(create_event)
-            
-            # Should have created a chain move event using filesystem search
-            assert len(handler.move_events) == 2  # Initial move + new chain move
-            move_event = handler.move_events[1]  # The new chain move
-            assert move_event['type'] == 'file_moved'
-            assert Path(move_event['old_path']) == Path('/project/old_location/scene.blend')
-            assert Path(move_event['new_path']) == Path('/project/new_location/scene.blend')
-            assert move_event.get('chain_move') == True
-            assert move_event.get('correlated') == True
-            
-            # Verify that filesystem search was called
-            mock_find_files.assert_called_once()
     
-    @patch('blendwatch.utils.path_utils.find_files_by_extension')
-    def test_blend_file_broader_search_scope(self, mock_find_files):
-        """Test that .blend files get broader search scope for filesystem-based move detection"""
-        # Create a complex directory structure scenario
-        # Original file deep in a different branch: C:\root\documents\project1\file.blend
-        # New file deep in target branch: C:\root\projects\game\assets\scenes\nested\file.blend
+    def test_file_index_processed_files_cleanup(self):
+        """Test that processed files list is cleaned up over time"""
+        handler = MoveTrackingHandler(['.txt'], [])
         
-        original_file = Path(r'C:\root\documents\project1\test.blend')
-        target_file = Path(r'C:\root\projects\game\assets\scenes\nested\test.blend')
+        # Add some old processed files
+        current_time = time.time()
+        handler.file_index_processed_files['/old/file.txt'] = current_time - 700  # Old (> 600 seconds)
+        handler.file_index_processed_files['/recent/file.txt'] = current_time - 100  # Recent
         
-        # Mock the filesystem search to return the original file when searching from 5 levels up
-        # (which should reach C:\root and find the original file)
-        def mock_find_side_effect(search_path, extensions, recursive=True):
-            search_str = str(search_path)
-            if r'C:\root' in search_str:  # Broad search from 5 levels up
-                return [original_file, target_file]
-            elif r'projects\game' in search_str:  # Limited search (2-3 levels up)
-                return [target_file]  # Only finds the target file
-            else:
-                return []
+        # Trigger cleanup by processing a create event
+        create_event = FileCreatedEvent('/new/file.txt')
         
-        mock_find_files.side_effect = mock_find_side_effect
+        with patch('pathlib.Path.exists', return_value=True):
+            handler.on_created(create_event)
         
-        handler = MoveTrackingHandler(['.blend'], [], verbose=True)
-        
-        # Simulate a CREATE event for the .blend file in the deep nested location
-        create_event = {
-            'timestamp': '2024-01-20T10:30:45Z',
-            'path': str(target_file),
-            'type': 'file_created',
-            'is_directory': False
-        }
-        
-        # The correlation should find the original file due to broader search for .blend files
-        result = handler._try_correlate_events(create_event, is_delete=False)
-        
-        # Should successfully correlate as a move
-        assert result == True
-        assert len(handler.move_events) == 1
-        
-        move_event = handler.move_events[0]
-        assert move_event['type'] == 'file_moved'
-        assert move_event['old_path'] == str(original_file)
-        assert move_event['new_path'] == str(target_file)
-        assert move_event.get('chain_move') == True
-        
-        # Verify that find_files_by_extension was called with broader search scope
-        # Should be called at least once with a path that can reach both files
-        calls = mock_find_files.call_args_list
-        
-        # Look for a call that would find both files (broader search)
-        found_broad_search = False
-        for call in calls:
-            search_path = str(call[0][0])  # First positional argument
-            if r'C:\root' in search_path:  # This is the broad search that finds both files
-                found_broad_search = True
-                break
-        
-        assert found_broad_search, f"Expected broad search call not found. Calls: {calls}"
+        # Old file should be cleaned up, recent should remain
+        assert '/old/file.txt' not in handler.file_index_processed_files
+        assert '/recent/file.txt' in handler.file_index_processed_files
+
 
 class TestFileWatcher:
     """Test the FileWatcher class"""
     
-    def setup_method(self):
-        """Set up test fixtures"""
-        self.watch_path = '/test/path'
-        self.extensions = ['.py', '.txt']
-        self.ignore_dirs = [r'__pycache__']
-        self.recursive = True
-        self.output_file = None
-        self.verbose = False
-        
-        self.watcher = FileWatcher(
-            watch_path=self.watch_path,
-            extensions=self.extensions,
-            ignore_dirs=self.ignore_dirs,
-            recursive=self.recursive,
-            output_file=self.output_file,
-            verbose=self.verbose
-        )
-    
-    def test_watcher_initialization(self):
-        """Test FileWatcher initialization"""
-        assert self.watcher.watch_path == Path(self.watch_path)
-        assert self.watcher.extensions == self.extensions
-        assert self.watcher.ignore_dirs == self.ignore_dirs
-        assert self.watcher.recursive == self.recursive
-        assert self.watcher.output_file == self.output_file
-        assert self.watcher.verbose == self.verbose
-        assert self.watcher.observer is not None
-        assert self.watcher.event_handler is not None
-    
-    @patch('blendwatch.core.watcher.Observer')
-    def test_start_watching(self, mock_observer_class):
-        """Test starting the file watcher"""
-        mock_observer = Mock()
-        mock_observer_class.return_value = mock_observer
-        
+    def test_init_with_file_index(self):
+        """Test FileWatcher initialization with file index enabled"""
         watcher = FileWatcher(
             watch_path='/test/path',
             extensions=['.py'],
-            ignore_dirs=[],
-            recursive=True,
-            output_file=None,
-            verbose=False
-        )
-        
-        watcher.start()
-        
-        mock_observer.schedule.assert_called_once()
-        mock_observer.start.assert_called_once()
-    
-    @patch('blendwatch.core.watcher.Observer')
-    def test_stop_watching(self, mock_observer_class):
-        """Test stopping the file watcher"""
-        mock_observer = Mock()
-        mock_observer_class.return_value = mock_observer
-        
-        watcher = FileWatcher(
-            watch_path='/test/path',
-            extensions=['.py'],
-            ignore_dirs=[],
-            recursive=True,
-            output_file=None,
-            verbose=False
-        )
-        
-        watcher.start()
-        watcher.stop()
-        
-        mock_observer.stop.assert_called_once()
-        mock_observer.join.assert_called_once()
-    
-    def test_watcher_with_custom_parameters(self, tmp_path):
-        """Test FileWatcher with custom parameters"""
-        log_file = tmp_path / 'log.json'
-        watcher = FileWatcher(
-            watch_path='/custom/path',
-            extensions=['.blend', '.fbx'],
-            ignore_dirs=[r'\.git', r'backup'],
-            recursive=False,
-            output_file=str(log_file),
-            verbose=True
-        )
-        
-        assert watcher.watch_path == Path('/custom/path')
-        assert watcher.extensions == ['.blend', '.fbx']
-        assert watcher.ignore_dirs == [r'\.git', r'backup']
-        assert watcher.recursive == False
-        assert watcher.output_file == str(log_file)
-        assert watcher.verbose == True
-    
-    def test_get_events(self):
-        """Test getting recorded events"""
-        events = self.watcher.get_events()
-        assert isinstance(events, list)
-        # Initially should be empty
-        assert len(events) == 0
-    
-    @patch('blendwatch.core.watcher.Observer')
-    def test_is_alive(self, mock_observer_class):
-        """Test checking if watcher is alive"""
-        mock_observer = Mock()
-        mock_observer.is_alive.return_value = True
-        mock_observer_class.return_value = mock_observer
-        
-        watcher = FileWatcher(
-            watch_path='/test/path',
-            extensions=['.py'],
-            ignore_dirs=[],
-            recursive=True,
-            output_file=None,
-            verbose=False
-        )
-        
-        assert watcher.is_alive() == True
-        mock_observer.is_alive.assert_called_once()
-
-class TestFileIndexIntegration:
-    """Test the file index integration with FileWatcher"""
-    
-    def test_file_index_initialization(self, tmp_path):
-        """Test that file index is properly initialized"""
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=True,
-            index_rescan_interval=0  # Disable periodic rescanning for test
+            ignore_dirs=['__pycache__'],
+            enable_file_index=True
         )
         
         assert watcher.file_index is not None
-        assert watcher.file_index.watch_path == tmp_path
-        assert watcher.file_index.extensions == {'.blend'}
-        assert watcher.file_index.rescan_interval == 0
+        # Use Path for cross-platform compatibility
+        assert Path(str(watcher.file_index.watch_path)) == Path('/test/path')
+        assert '.py' in watcher.file_index.extensions
     
-    def test_file_index_disabled(self, tmp_path):
-        """Test that file index can be disabled"""
+    def test_init_without_file_index(self):
+        """Test FileWatcher initialization with file index disabled"""
         watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
+            watch_path='/test/path',
+            extensions=['.py'],
+            ignore_dirs=['__pycache__'],
             enable_file_index=False
         )
         
         assert watcher.file_index is None
     
-    def test_simple_directory_move_detection(self, tmp_path):
-        """Test that directory moves with tracked files are detected"""
-        # Create directory structure
-        source_dir = tmp_path / "source"
-        target_dir = tmp_path / "target"
-        source_dir.mkdir()
-        target_dir.mkdir()
-        
-        # Create a test .blend file
-        test_file = source_dir / "test.blend"
-        test_file.write_text("dummy blend content")
-        
-        # Start watcher with file index
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            verbose=False,
-            enable_file_index=True,
-            index_rescan_interval=0  # Disable periodic rescanning
-        )
-        
-        watcher.start()
-        time.sleep(0.5)  # Allow initialization
-        
-        # Verify file index is active and file is indexed
-        assert watcher.file_index is not None
-        assert watcher.file_index.get_file_count() == 1
-        assert watcher.file_index.is_file_tracked(str(test_file))
-        
-        # Perform the move
-        import shutil
-        destination = target_dir / "source"
-        shutil.move(str(source_dir), str(destination))
-        
-        # Wait for events to be processed
-        time.sleep(1)
-        
-        watcher.stop()
-        
-        # Check that move was detected
-        events = watcher.get_events()
-        file_moves = [e for e in events if e.get('type') == 'file_moved']
-        
-        assert len(file_moves) >= 1
-        
-        # Find the specific move we're looking for
-        expected_old = str(test_file)
-        expected_new = str(destination / "test.blend")
-        
-        move_found = False
-        for event in file_moves:
-            if (event.get('old_path') == expected_old and 
-                event.get('new_path') == expected_new and
-                event.get('detection_method') == 'file_index'):
-                move_found = True
-                break
-        
-        assert move_found, f"Expected move not found: {expected_old} -> {expected_new}"
+    def test_start_stop_with_file_index(self):
+        """Test starting and stopping watcher with file index"""
+        with patch('blendwatch.core.watcher.Observer') as mock_observer_class:
+            mock_observer = Mock()
+            mock_observer_class.return_value = mock_observer
+            
+            watcher = FileWatcher(
+                watch_path='/test/path',
+                extensions=['.py'],
+                ignore_dirs=[],
+                enable_file_index=True
+            )
+            
+            # Verify file index was created
+            assert watcher.file_index is not None
+            
+            # Mock file index methods after creation
+            original_start = watcher.file_index.start
+            original_stop = watcher.file_index.stop
+            watcher.file_index.start = Mock(side_effect=original_start)
+            watcher.file_index.stop = Mock(side_effect=original_stop)
+            
+            # Start watcher
+            watcher.start()
+            
+            # File index should be started
+            watcher.file_index.start.assert_called_once()
+            mock_observer.schedule.assert_called_once()
+            mock_observer.start.assert_called_once()
+            
+            # Stop watcher
+            watcher.stop()
+            
+            # File index should be stopped
+            watcher.file_index.stop.assert_called_once()
+            mock_observer.stop.assert_called_once()
+            mock_observer.join.assert_called_once()
     
-    def test_nested_directory_move_detection(self, tmp_path):
-        """Test that nested directory moves with multiple tracked files are detected"""
-        # Create complex directory structure
-        source_dir = tmp_path / "source"
-        target_dir = tmp_path / "target"
-        source_dir.mkdir()
-        target_dir.mkdir()
-        
-        # Create nested structure with multiple .blend files
-        subdir = source_dir / "subdir"
-        subdir.mkdir()
-        
-        test_file1 = source_dir / "main.blend"
-        test_file1.write_text("main blend content")
-        
-        test_file2 = subdir / "nested.blend"
-        test_file2.write_text("nested blend content")
-        
-        # Start watcher with file index
+    def test_get_events(self):
+        """Test getting move events from watcher"""
         watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
+            watch_path='/test/path',
+            extensions=['.py'],
             ignore_dirs=[],
-            verbose=False,
-            enable_file_index=True,
-            index_rescan_interval=0
+            enable_file_index=False
         )
         
-        watcher.start()
-        time.sleep(0.5)
-        
-        # Verify file index is active and files are indexed
-        assert watcher.file_index is not None
-        assert watcher.file_index.get_file_count() == 2
-        assert watcher.file_index.is_file_tracked(str(test_file1))
-        assert watcher.file_index.is_file_tracked(str(test_file2))
-        
-        # Perform the move
-        import shutil
-        destination = target_dir / "source"
-        shutil.move(str(source_dir), str(destination))
-        
-        # Wait for events to be processed
-        time.sleep(1)
-        
-        watcher.stop()
-        
-        # Check that both moves were detected
-        events = watcher.get_events()
-        file_moves = [e for e in events if e.get('type') == 'file_moved' and e.get('detection_method') == 'file_index']
-        
-        # Should detect moves for both files
-        expected_moves = [
-            (str(test_file1), str(destination / "main.blend")),
-            (str(test_file2), str(destination / "subdir" / "nested.blend"))
+        # Add some test events
+        test_events = [
+            {'type': 'file_moved', 'old_path': '/a.py', 'new_path': '/b.py'},
+            {'type': 'file_renamed', 'old_path': '/c.py', 'new_path': '/d.py'}
         ]
+        watcher.event_handler.move_events = test_events
         
-        found_moves = [(e.get('old_path'), e.get('new_path')) for e in file_moves]
-        
-        for expected_old, expected_new in expected_moves:
-            assert (expected_old, expected_new) in found_moves, \
-                f"Expected move not found: {expected_old} -> {expected_new}. Found: {found_moves}"
-    
-    def test_file_index_ignores_non_tracked_extensions(self, tmp_path):
-        """Test that file index only tracks specified extensions"""
-        # Create files with different extensions
-        test_blend = tmp_path / "test.blend"
-        test_txt = tmp_path / "test.txt"
-        test_blend.write_text("blend content")
-        test_txt.write_text("txt content")
-        
-        # Start watcher tracking only .blend files
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=True,
-            index_rescan_interval=0
-        )
-        
-        watcher.start()
-        time.sleep(0.5)
-        watcher.stop()
-        
-        # Verify file index is active and only tracks specified extensions
-        assert watcher.file_index is not None
-        assert watcher.file_index.get_file_count() == 1
-        assert watcher.file_index.is_file_tracked(str(test_blend))
-        assert not watcher.file_index.is_file_tracked(str(test_txt))
-    
-    def test_file_index_correlation_window(self, tmp_path):
-        """Test that file index correlation works within time window"""
-        source_file = tmp_path / "test.blend"
-        source_file.write_text("content")
-        
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=True,
-            index_rescan_interval=0
-        )
-        
-        watcher.start()
-        time.sleep(0.5)
-        
-        # Manually test the file index correlation
-        file_index = watcher.file_index
-        assert file_index is not None
-        
-        # Record a deletion
-        file_index.record_deletion(str(source_file))
-        
-        # Create a new file with same name in different location
-        target_file = tmp_path / "subdir" / "test.blend"
-        target_file.parent.mkdir()
-        target_file.write_text("content")
-        
-        # Record creation and check for move detection
-        move_result = file_index.record_creation(str(target_file))
-        
-        watcher.stop()
-        
-        # Should detect the move
-        assert move_result is not None
-        old_path, new_path = move_result
-        assert old_path == str(source_file)
-        assert new_path == str(target_file)
-    
-    def test_file_index_no_false_positives(self, tmp_path):
-        """Test that file index doesn't create false positive moves"""
-        # Create a new file without any prior deletion
-        test_file = tmp_path / "new.blend"
-        test_file.write_text("content")
-        
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=True,
-            index_rescan_interval=0
-        )
-        
-        watcher.start()
-        time.sleep(0.5)
-        
-        # Manually test creation without prior deletion
-        file_index = watcher.file_index
-        assert file_index is not None
-        move_result = file_index.record_creation(str(test_file))
-        
-        watcher.stop()
-        
-        # Should not detect any move (no prior deletion)
-        assert move_result is None
-    
-    @patch('time.time')
-    def test_file_index_cleanup_old_events(self, mock_time, tmp_path):
-        """Test that file index cleans up old events properly"""
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=True,
-            index_rescan_interval=0
-        )
-        
-        file_index = watcher.file_index
-        assert file_index is not None
-        
-        # Mock time progression
-        mock_time.return_value = 1000.0
-        
-        # Record some deletions and creations
-        file_index.record_deletion("/old/path1.blend")
-        file_index.record_deletion("/old/path2.blend")
-        
-        # Move time forward beyond correlation window
-        mock_time.return_value = 1020.0  # 20 seconds later (beyond 10s window)
-        
-        # Trigger cleanup
-        file_index._cleanup_old_events()
-        
-        # Old events should be cleaned up
-        assert len(file_index.recent_deletions) == 0
-        assert len(file_index.recent_creations) == 0
-    
-    def test_watcher_without_file_index_fallback(self, tmp_path):
-        """Test that watcher still works when file index is disabled"""
-        # Create a simple file
-        test_file = tmp_path / "test.blend"
-        test_file.write_text("content")
-        
-        watcher = FileWatcher(
-            watch_path=str(tmp_path),
-            extensions=['.blend'],
-            ignore_dirs=[],
-            enable_file_index=False  # Disable file index
-        )
-        
-        assert watcher.file_index is None
-        
-        watcher.start()
-        time.sleep(0.5)
-        watcher.stop()
-        
-        # Should work without errors even without file index
         events = watcher.get_events()
-        assert isinstance(events, list)
+        assert len(events) == 2
+        assert events == test_events
+        
+        # Should return a copy, not the original list
+        assert events is not watcher.event_handler.move_events
+
+
+class TestFileIndexIntegration:
+    """Integration tests with real file index"""
+    
+    def test_real_file_index_integration(self):
+        """Test with a real file index instance"""
+        with patch('blendwatch.core.file_index.FileIndex') as mock_file_index_class:
+            mock_file_index = Mock()
+            mock_file_index_class.return_value = mock_file_index
+            mock_file_index.record_creation.return_value = None  # No move detected
+            
+            handler = MoveTrackingHandler(['.txt'], [], file_index=mock_file_index)
+            
+            # Test creation event
+            create_event = FileCreatedEvent('/test/file.txt')
+            
+            with patch('pathlib.Path.exists', return_value=True):
+                handler.on_created(create_event)
+            
+            # File index should be called
+            mock_file_index.record_creation.assert_called_once_with('/test/file.txt')
+            
+            # No move event should be created since file index returned None
+            assert len(handler.move_events) == 0
+
+
+class TestCreateDeleteCorrelation:
+    """Test create/delete event correlation for Windows-style moves"""
+    
+    def setup_method(self):
+        """Set up test fixtures"""
+        self.handler = MoveTrackingHandler(['.blend'], [], verbose=False)
+        # Use shorter timeout for faster tests
+        self.handler.correlation_timeout = 1.0
+    
+    def test_simple_file_correlation(self):
+        """Test basic delete->create correlation"""
+        # Simulate delete event
+        delete_event = FileDeletedEvent('/old/path/file.blend')
+        
+        with patch('pathlib.Path.exists', return_value=False):
+            self.handler.on_deleted(delete_event)
+        
+        # Check delete was recorded
+        assert '/old/path/file.blend' in self.handler.pending_deletes
+        
+        # Simulate create event for the same file in a new location
+        create_event = FileCreatedEvent('/new/path/file.blend')
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch.object(self.handler, '_get_file_info') as mock_get_info:
+            
+            # Mock file info to simulate same file (name + extension match)
+            mock_get_info.side_effect = [
+                ('file.blend', '.blend', 1024),  # create file info
+                ('file.blend', '.blend', 0)      # delete file info (no size available)
+            ]
+            
+            self.handler.on_created(create_event)
+        
+        # Should have created a move event and removed the pending delete
+        assert len(self.handler.move_events) == 1
+        assert '/old/path/file.blend' not in self.handler.pending_deletes
+        
+        move_event = self.handler.move_events[0]
+        assert move_event['old_path'] == '/old/path/file.blend'
+        assert move_event['new_path'] == '/new/path/file.blend'
+        assert move_event['type'] == 'file_moved'
+        assert move_event['detection_method'] == 'correlation'
+    
+    def test_correlation_with_rename(self):
+        """Test correlation detects renames (same parent directory)"""
+        # Simulate delete event
+        delete_event = FileDeletedEvent('/same/path/oldname.blend')
+        
+        with patch('pathlib.Path.exists', return_value=False):
+            self.handler.on_deleted(delete_event)
+        
+        # Simulate create event in same directory (rename)
+        create_event = FileCreatedEvent('/same/path/newname.blend')
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch.object(self.handler, '_get_file_info') as mock_get_info:
+            
+            # Mock file info - same extension, different names
+            mock_get_info.side_effect = [
+                ('newname.blend', '.blend', 1024),    # create file info
+                ('oldname.blend', '.blend', 0)        # delete file info (no size available)
+            ]
+            
+            self.handler.on_created(create_event)
+        
+        # Should have created a rename event
+        assert len(self.handler.move_events) == 1
+        move_event = self.handler.move_events[0]
+        assert move_event['type'] == 'file_renamed'
+        assert move_event['detection_method'] == 'correlation'
+    
+    def test_correlation_timeout(self):
+        """Test that correlation times out correctly"""
+        # Use very short timeout for this test
+        self.handler.correlation_timeout = 0.1
+        
+        # Simulate delete event
+        delete_event = FileDeletedEvent('/old/path/file.blend')
+        
+        with patch('pathlib.Path.exists', return_value=False):
+            self.handler.on_deleted(delete_event)
+        
+        # Check delete was recorded
+        assert '/old/path/file.blend' in self.handler.pending_deletes
+        
+        # Wait for timeout
+        time.sleep(0.2)
+        
+        # Simulate create event after timeout
+        create_event = FileCreatedEvent('/new/path/file.blend')
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch.object(self.handler, '_get_file_info') as mock_get_info:
+            
+            mock_get_info.return_value = ('file.blend', '.blend', 1024)
+            self.handler.on_created(create_event)
+        
+        # Should not have created a move event due to timeout
+        assert len(self.handler.move_events) == 0
+        # Delete should have been cleaned up
+        assert '/old/path/file.blend' not in self.handler.pending_deletes

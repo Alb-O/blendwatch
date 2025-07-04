@@ -59,8 +59,7 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
             ignore_dirs=config_obj.ignore_dirs,
             output_file=str(log_file),
             verbose=verbose,
-            recursive=True,
-            event_correlation_timeout=float(getattr(config_obj, 'debounce_delay', 2.0))
+            recursive=True
         )
         
         watcher.start()
