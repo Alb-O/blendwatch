@@ -4,7 +4,6 @@ from .path_utils import (
     resolve_path,
     is_path_ignored,
     find_files_by_extension,
-    normalize_path_separators,
     get_relative_path,
     ensure_directory_exists,
     bytes_to_string,
@@ -16,9 +15,9 @@ __all__ = [
     'resolve_path',
     'is_path_ignored',
     'find_files_by_extension',
-    'normalize_path_separators',
     'get_relative_path',
     'ensure_directory_exists',
+    'bytes_to_string',
     # Logging utilities
     'setup_logger',
     'get_logger',

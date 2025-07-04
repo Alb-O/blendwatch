@@ -64,7 +64,16 @@ def backlinks_command(target_asset: str, search_directory: str, config: Optional
         
         # Find backlinks using the scanner with config
         scanner = BacklinkScanner(search_path, config=config_obj)
+        
+        # Show progress for long operations
+        if verbose:
+            click.echo(f"Scanning for backlinks to {target_path.name}...")
+        
         results = scanner.find_backlinks_to_file(target_path, max_workers=max_workers)
+        
+        if verbose:
+            click.echo(f"Scan completed. Found {len(results)} backlinks.")
+        
         
         # Output results
         if output_format == 'json':

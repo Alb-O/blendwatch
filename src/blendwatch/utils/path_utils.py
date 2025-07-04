@@ -57,13 +57,12 @@ def find_files_by_extension(directory: Path, extensions: List[str], recursive: b
     return files
 
 
-def normalize_path_separators(path: str) -> str:
-    """Normalize path separators for cross-platform compatibility."""
-    return path.replace('\\', os.sep).replace('/', os.sep)
-
-
 def get_relative_path(path: Path, base: Path) -> Optional[Path]:
-    """Get relative path from base, return None if not possible."""
+    """Get relative path from base, return None if not possible.
+    
+    Note: This is kept for backward compatibility. Consider using 
+    blender_asset_tracer.bpathlib.BlendPath.mkrelative() for new code.
+    """
     try:
         return path.relative_to(base)
     except ValueError:

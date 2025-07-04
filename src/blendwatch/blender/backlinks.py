@@ -171,12 +171,14 @@ class BacklinkScanner:
         return None
     
     def find_backlinks_to_file(self, target_asset: Union[str, Path], 
-                              max_workers: int = 4) -> List[BacklinkResult]:
+                              max_workers: int = 4, 
+                              progress_callback: Optional[progress.Callback] = None) -> List[BacklinkResult]:
         """Find all blend files that link to the target asset.
         
         Args:
             target_asset: Path to the asset to find backlinks for
             max_workers: Number of threads to use for parallel processing
+            progress_callback: Optional callback function for progress updates
             
         Returns:
             List of BacklinkResult objects for files that link to the target
@@ -196,7 +198,13 @@ class BacklinkScanner:
         
         log.info(f"Checking {len(blend_files)} blend files for backlinks to {target_asset.name}")
         
+        # Progress reporting
+        if progress_callback:
+            # Simple progress notification for now
+            log.info(f"Starting backlink scan for {target_asset.name}")
+            
         # Use the cache's optimized bulk operation
+        processed = 0
         linking_files = self.cache.get_files_linking_to(str(target_asset), blend_files)
         
         # Convert to BacklinkResult objects

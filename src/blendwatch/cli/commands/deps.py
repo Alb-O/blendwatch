@@ -66,8 +66,10 @@ def deps(blend_file: Path, search_dir: Optional[Path], show_missing: bool,
         
         # Show summary only
         if summary:
-            click.echo(f"Analyzing dependencies for {shorten(Path.cwd(), blend_file)}...")
-            dep_summary = scanner.get_dependency_summary(blend_file)
+            with click.progressbar(label=f"Analyzing dependencies for {shorten(Path.cwd(), blend_file)}", 
+                                 length=1, show_eta=False, show_percent=False) as bar:
+                dep_summary = scanner.get_dependency_summary(blend_file)
+                bar.update(1)
             
             click.echo(f"\nDependency Summary for {blend_file.name}:")
             click.echo("=" * 50)
@@ -85,7 +87,14 @@ def deps(blend_file: Path, search_dir: Optional[Path], show_missing: bool,
         
         # Progress callback for long operations
         progress_cb = None
-        # Note: blender-asset-tracer progress.Spinner doesn't exist, so we'll skip this for now
+        if verbose:
+            from blender_asset_tracer.trace.progress import Callback
+            
+            class ProgressReporter(Callback):
+                def trace_blendfile(self, filename):
+                    click.echo(f"  Scanning: {shorten(Path.cwd(), Path(filename))}", err=True)
+            
+            progress_cb = ProgressReporter()
         
         # Get dependencies
         if show_missing:
