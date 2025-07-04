@@ -8,6 +8,7 @@ from typing import Optional
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten
 
 from blendwatch.core.watcher import FileWatcher
 from blendwatch.core.config import load_default_config
@@ -64,14 +65,16 @@ def watch_command(path: str, extensions: tuple, ignore_dirs: tuple, config: Opti
     if not ignore_patterns:
         ignore_patterns = default_config.ignore_dirs
     
+    cwd = Path.cwd()
     click.echo(f"{Fore.GREEN}Starting BlendWatch...{Style.RESET_ALL}")
-    click.echo(f"{Fore.CYAN}Watching: {watch_path}{Style.RESET_ALL}")
+    click.echo(f"{Fore.CYAN}Watching: {shorten(cwd, watch_path)}{Style.RESET_ALL}")
     click.echo(f"{Fore.CYAN}Extensions: {', '.join(watch_extensions)}{Style.RESET_ALL}")
     click.echo(f"{Fore.CYAN}Ignore patterns: {', '.join(ignore_patterns)}{Style.RESET_ALL}")
     click.echo(f"{Fore.CYAN}Recursive: {recursive}{Style.RESET_ALL}")
     
     if output:
-        click.echo(f"{Fore.CYAN}Output file: {output}{Style.RESET_ALL}")
+        output_path = Path(output).resolve()
+        click.echo(f"{Fore.CYAN}Output file: {shorten(cwd, output_path)}{Style.RESET_ALL}")
     
     # Create and start the file watcher
     watcher = FileWatcher(

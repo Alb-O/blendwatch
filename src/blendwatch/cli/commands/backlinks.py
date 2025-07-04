@@ -9,6 +9,7 @@ from typing import Optional
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten
 
 from blendwatch.blender.backlinks import BacklinkScanner
 from blendwatch.core.config import load_default_config
@@ -52,10 +53,11 @@ def backlinks_command(target_asset: str, search_directory: str, config: Optional
     config_obj = load_config_with_fallback(config, search_path, verbose)
     
     try:
+        cwd = Path.cwd()
         if verbose:
             click.echo(f"{Fore.GREEN}Searching for backlinks...{Style.RESET_ALL}")
-            click.echo(f"{Fore.CYAN}Target: {target_path.name}{Style.RESET_ALL}")
-            click.echo(f"{Fore.CYAN}Search directory: {search_path}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Target: {shorten(cwd, target_path)}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Search directory: {shorten(cwd, search_path)}{Style.RESET_ALL}")
             click.echo(f"{Fore.CYAN}Max workers: {max_workers}{Style.RESET_ALL}")
             if config_obj.ignore_dirs:
                 click.echo(f"{Fore.CYAN}Ignoring directories: {', '.join(config_obj.ignore_dirs)}{Style.RESET_ALL}")
@@ -80,8 +82,9 @@ def backlinks_command(target_asset: str, search_directory: str, config: Optional
                 click.echo(f"\n{Fore.GREEN}Found {len(results)} backlinks to {target_path.name}:{Style.RESET_ALL}\n")
                 
                 for i, result in enumerate(results, 1):
+                    rel_path = shorten(cwd, result.blend_file)
                     click.echo(f"{Fore.YELLOW}{i:2d}.{Style.RESET_ALL} {Fore.CYAN}{result.blend_file.name}{Style.RESET_ALL}")
-                    click.echo(f"     Path: {result.blend_file}")
+                    click.echo(f"     Path: {rel_path}")
                     click.echo(f"     Libraries: {Fore.MAGENTA}{', '.join(result.matching_libraries)}{Style.RESET_ALL}")
                     
                     if verbose:

@@ -9,6 +9,7 @@ from typing import Optional
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten
 
 from blendwatch.core.watcher import FileWatcher
 from blendwatch.blender.link_updater import apply_move_log_incremental
@@ -39,11 +40,12 @@ def sync_command(watch_path: str, update_dir: Optional[str], config: Optional[st
     watch_dir = Path(watch_path).resolve()
     update_directory = Path(update_dir).resolve() if update_dir else watch_dir
     log_file = watch_dir / "blendwatch.log"
+    cwd = Path.cwd()
     
     click.echo(f"{Fore.GREEN}Starting BlendWatch auto-sync mode...{Style.RESET_ALL}")
-    click.echo(f"{Fore.CYAN}Watching: {watch_dir}{Style.RESET_ALL}")
-    click.echo(f"{Fore.CYAN}Updating links in: {update_directory}{Style.RESET_ALL}")
-    click.echo(f"{Fore.CYAN}Log file: {log_file}{Style.RESET_ALL}")
+    click.echo(f"{Fore.CYAN}Watching: {shorten(cwd, watch_dir)}{Style.RESET_ALL}")
+    click.echo(f"{Fore.CYAN}Updating links in: {shorten(cwd, update_directory)}{Style.RESET_ALL}")
+    click.echo(f"{Fore.CYAN}Log file: {shorten(cwd, log_file)}{Style.RESET_ALL}")
     
     if dry_run:
         click.echo(f"{Fore.YELLOW}DRY RUN MODE: No files will be modified{Style.RESET_ALL}")

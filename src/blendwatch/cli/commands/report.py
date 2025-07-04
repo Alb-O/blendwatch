@@ -10,6 +10,7 @@ from datetime import datetime
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten
 
 from blendwatch.cli.utils import check_file_exists, suggest_alternatives
 
@@ -36,21 +37,19 @@ def report_command(log_file: str, output_format: str, filter_type: str, since: O
         sys.exit(1)
     
     try:
+        events = []
         with open(log_path, 'r') as f:
-            if log_path.suffix == '.json':
-                events = []
-                for line in f:
-                    try:
-                        events.append(json.loads(line.strip()))
-                    except json.JSONDecodeError:
-                        continue
-            else:
-                # Parse text format logs
-                events = []
-                for line in f:
-                    # Simple text parsing - you might want to improve this
+            # Try to parse each line as JSON first (BlendWatch format)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # Fall back to simple text parsing for legacy logs
                     if ' -> ' in line:
-                        parts = line.strip().split(' -> ')
+                        parts = line.split(' -> ')
                         if len(parts) == 2:
                             events.append({
                                 'timestamp': datetime.now().isoformat(),
@@ -65,7 +64,13 @@ def report_command(log_file: str, output_format: str, filter_type: str, since: O
             events = [e for e in events if datetime.fromisoformat(e.get('timestamp', '')) >= since_date]
         
         if filter_type != 'all':
-            events = [e for e in events if e.get('type') == filter_type]
+            # Handle both "moved"/"renamed" and "file_moved"/"file_renamed" formats
+            if filter_type == 'moved':
+                events = [e for e in events if e.get('type') in ('moved', 'file_moved')]
+            elif filter_type == 'renamed':
+                events = [e for e in events if e.get('type') in ('renamed', 'file_renamed')]
+            else:
+                events = [e for e in events if e.get('type') == filter_type]
         
         # Output report
         if output_format == 'json':
@@ -75,6 +80,7 @@ def report_command(log_file: str, output_format: str, filter_type: str, since: O
             for event in events:
                 click.echo(f"{event.get('timestamp', '')},{event.get('type', '')},{event.get('old_path', '')},{event.get('new_path', '')}")
         else:  # table
+            cwd = Path.cwd()
             click.echo(f"\n{Fore.GREEN}File Operations Report{Style.RESET_ALL}")
             click.echo(f"{Fore.CYAN}Total events: {len(events)}{Style.RESET_ALL}\n")
             
@@ -83,6 +89,12 @@ def report_command(log_file: str, output_format: str, filter_type: str, since: O
                 op_type = event.get('type', 'unknown')
                 old_path = event.get('old_path', '')
                 new_path = event.get('new_path', '')
+                
+                # Use shorten for better path display
+                if old_path:
+                    old_path = str(shorten(cwd, Path(old_path)))
+                if new_path:
+                    new_path = str(shorten(cwd, Path(new_path)))
                 
                 click.echo(f"{Fore.YELLOW}[{timestamp}]{Style.RESET_ALL} {Fore.MAGENTA}{op_type.upper()}{Style.RESET_ALL}")
                 click.echo(f"  {Fore.RED}From:{Style.RESET_ALL} {old_path}")

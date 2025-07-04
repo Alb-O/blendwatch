@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten
 
 from blendwatch.blender.link_updater import apply_move_log
 from blendwatch.cli.utils import check_file_exists, check_directory_exists, suggest_alternatives, handle_cli_exception
@@ -40,9 +41,10 @@ def update_links_command(log_file: str, search_directory: str, dry_run: bool, ve
         sys.exit(1)
 
     try:
+        cwd = Path.cwd()
         if verbose:
-            click.echo(f"{Fore.CYAN}Updating links from log: {log_path}{Style.RESET_ALL}")
-            click.echo(f"{Fore.CYAN}Searching in directory: {search_path}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Updating links from log: {shorten(cwd, log_path)}{Style.RESET_ALL}")
+            click.echo(f"{Fore.CYAN}Searching in directory: {shorten(cwd, search_path)}{Style.RESET_ALL}")
         
         updated = apply_move_log(str(log_path), str(search_path), dry_run=dry_run, verbose=verbose, relative=relative)
         if dry_run:

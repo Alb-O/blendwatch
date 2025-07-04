@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Tuple, Union
 
+from blender_asset_tracer.cli.common import shorten
 from blendwatch.blender.backlinks import BacklinkScanner
 from blendwatch.blender.library_writer import LibraryPathWriter, update_blend_file_paths
 
@@ -122,7 +123,9 @@ def apply_move_log_incremental(
                         if old_path in current.values():
                             total_updates += 1
                             if verbose:
-                                print(f"Would update {result.blend_file} -> {new_path}")
+                                # Use shorten() for better path display
+                                cwd = Path.cwd()
+                                print(f"Would update {shorten(cwd, Path(result.blend_file))} -> {shorten(cwd, Path(new_path))}")
                         continue
 
                     # Use optimized update function
@@ -142,7 +145,10 @@ def apply_move_log_incremental(
                                     actual_path = writer._convert_to_relative_path(new_path)
                                 except:
                                     pass  # Fallback to original path if conversion fails
-                            print(f"Updated {result.blend_file} -> {actual_path}")
+                            
+                            # Use shorten() for better path display
+                            cwd = Path.cwd()
+                            print(f"Updated {shorten(cwd, Path(result.blend_file))} -> {shorten(cwd, Path(actual_path))}")
                         
                         # Invalidate cache for modified file
                         scanner.cache.invalidate_file(result.blend_file)
@@ -227,7 +233,9 @@ def apply_move_log(
                     if old_path in current.values():
                         total_updates += 1
                         if verbose:
-                            print(f"Would update {result.blend_file} -> {new_path}")
+                            # Use shorten() for better path display
+                            cwd = Path.cwd()
+                            print(f"Would update {shorten(cwd, Path(result.blend_file))} -> {shorten(cwd, Path(new_path))}")
                     continue
 
                 # Update the path in this file
@@ -243,7 +251,10 @@ def apply_move_log(
                                 actual_path = writer._convert_to_relative_path(new_path)
                             except:
                                 pass  # Fallback to original path if conversion fails
-                        print(f"Updated {result.blend_file} -> {actual_path}")
+                        
+                        # Use shorten() for better path display
+                        cwd = Path.cwd()
+                        print(f"Updated {shorten(cwd, Path(result.blend_file))} -> {shorten(cwd, Path(actual_path))}")
             except Exception as e:
                 log.warning(f"Could not update {result.blend_file}: {e}")
 

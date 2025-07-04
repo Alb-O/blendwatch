@@ -8,6 +8,7 @@ from datetime import datetime
 
 import click
 from colorama import Fore, Style
+from blender_asset_tracer.cli.common import shorten, humanize_bytes
 
 from blendwatch.core.config import load_config
 
@@ -22,8 +23,9 @@ def status_command(directory: str, verbose: bool):
     """
     
     dir_path = Path(directory).resolve()
+    cwd = Path.cwd()
     
-    click.echo(f"{Fore.GREEN}BlendWatch Status for: {dir_path}{Style.RESET_ALL}\n")
+    click.echo(f"{Fore.GREEN}BlendWatch Status for: {shorten(cwd, dir_path)}{Style.RESET_ALL}\n")
     
     # Check for config file
     config_files = [
@@ -57,7 +59,7 @@ def status_command(directory: str, verbose: bool):
         for log_file in log_files:
             size = log_file.stat().st_size
             modified = datetime.fromtimestamp(log_file.stat().st_mtime)
-            click.echo(f"    {log_file.name} ({size} bytes, modified {modified.strftime('%Y-%m-%d %H:%M:%S')})")
+            click.echo(f"    {log_file.name} ({humanize_bytes(size)}, modified {modified.strftime('%Y-%m-%d %H:%M:%S')})")
             
             if verbose and log_file.name == 'blendwatch.log':
                 # Count recent events
@@ -85,13 +87,15 @@ def status_command(directory: str, verbose: bool):
         click.echo(f"{Fore.GREEN}✓{Style.RESET_ALL} Blend files: {len(blend_files)} found")
         if verbose and len(blend_files) <= 10:
             for blend_file in blend_files:
-                rel_path = blend_file.relative_to(dir_path)
-                click.echo(f"    {rel_path}")
+                rel_path = shorten(cwd, blend_file)
+                size = blend_file.stat().st_size
+                click.echo(f"    {rel_path} ({humanize_bytes(size)})")
         elif verbose:
             click.echo(f"    (showing first 10 of {len(blend_files)})")
             for blend_file in blend_files[:10]:
-                rel_path = blend_file.relative_to(dir_path)
-                click.echo(f"    {rel_path}")
+                rel_path = shorten(cwd, blend_file)
+                size = blend_file.stat().st_size
+                click.echo(f"    {rel_path} ({humanize_bytes(size)})")
     else:
         click.echo(f"{Fore.YELLOW}○{Style.RESET_ALL} Blend files: None found")
     
