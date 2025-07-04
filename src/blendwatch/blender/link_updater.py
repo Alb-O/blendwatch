@@ -134,7 +134,15 @@ def apply_move_log_incremental(
                     if updated:
                         total_updates += 1
                         if verbose:
-                            print(f"Updated {result.blend_file} -> {new_path}")
+                            # Show what was actually written (relative or absolute)
+                            actual_path = new_path
+                            if relative:
+                                try:
+                                    writer = LibraryPathWriter(result.blend_file)
+                                    actual_path = writer._convert_to_relative_path(new_path)
+                                except:
+                                    pass  # Fallback to original path if conversion fails
+                            print(f"Updated {result.blend_file} -> {actual_path}")
                         
                         # Invalidate cache for modified file
                         scanner.cache.invalidate_file(result.blend_file)
@@ -228,7 +236,14 @@ def apply_move_log(
                 if updated:
                     total_updates += 1
                     if verbose:
-                        print(f"Updated {result.blend_file} -> {new_path}")
+                        # Show what was actually written (relative or absolute)
+                        actual_path = new_path
+                        if relative:
+                            try:
+                                actual_path = writer._convert_to_relative_path(new_path)
+                            except:
+                                pass  # Fallback to original path if conversion fails
+                        print(f"Updated {result.blend_file} -> {actual_path}")
             except Exception as e:
                 log.warning(f"Could not update {result.blend_file}: {e}")
 

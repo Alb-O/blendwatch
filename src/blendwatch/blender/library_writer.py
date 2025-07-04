@@ -368,11 +368,52 @@ class LibraryPathWriter:
         try:
             new_path_obj = resolve_path(absolute_path)
             blend_dir = self.blend_file_path.parent
+            
+            # Try direct relative path first
             relative_path = get_relative_path(new_path_obj, blend_dir)
             if relative_path is not None:
                 return '//' + str(relative_path).replace('\\', '/')
-            else:
-                return str(new_path_obj)
+            
+            # If direct relative path doesn't work, try to find a common ancestor
+            # and create a relative path using .. navigation
+            try:
+                # Find the common path between the blend file directory and target file
+                # by iterating through parent directories
+                blend_parts = blend_dir.parts
+                target_parts = new_path_obj.parts
+                
+                # Find the longest common prefix
+                common_length = 0
+                for i, (blend_part, target_part) in enumerate(zip(blend_parts, target_parts)):
+                    if blend_part.lower() == target_part.lower():  # Case-insensitive comparison for Windows
+                        common_length = i + 1
+                    else:
+                        break
+                
+                if common_length > 0:
+                    # Calculate how many directories to go up from blend_dir to reach common ancestor
+                    up_levels = len(blend_parts) - common_length
+                    
+                    # Get the path from common ancestor to target
+                    down_path_parts = target_parts[common_length:]
+                    
+                    # Build the relative path
+                    if up_levels == 0:
+                        # Same directory level
+                        relative_parts = down_path_parts
+                    else:
+                        # Need to go up first
+                        relative_parts = ['..'] * up_levels + list(down_path_parts)
+                    
+                    relative_path_str = '/'.join(relative_parts)
+                    return '//' + relative_path_str
+                
+            except (ValueError, IndexError):
+                pass
+            
+            # If we can't create a relative path, return absolute
+            return str(new_path_obj)
+            
         except (ValueError, OSError):
             return absolute_path
     
