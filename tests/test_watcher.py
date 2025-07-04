@@ -61,6 +61,27 @@ class TestMoveTrackingHandler:
         # Should not ignore normal paths
         assert not handler.should_ignore_path('/path/to/file.py')
     
+    def test_should_ignore_blend_backup_files(self):
+        """Test that Blender backup and temporary files are ignored via ignore patterns"""
+        from blendwatch.core.config import load_default_config
+        
+        # Load default config with Blender ignore patterns
+        config = load_default_config()
+        handler = MoveTrackingHandler(['.blend'], config.ignore_dirs)
+        
+        # Should ignore Blender backup and temporary files via ignore patterns
+        assert handler.should_ignore_path('/path/to/scene.blend1')
+        assert handler.should_ignore_path('/path/to/scene.blend2')
+        assert handler.should_ignore_path('/path/to/scene.blend9')
+        assert handler.should_ignore_path('/path/to/project.blend@')
+        assert handler.should_ignore_path('C:\\Projects\\scene.blend1')
+        assert handler.should_ignore_path('C:\\Projects\\scene.blend@')
+        
+        # Should not ignore normal .blend files
+        assert not handler.should_ignore_path('/path/to/scene.blend')
+        assert not handler.should_ignore_path('/path/to/project.blend')
+        assert not handler.should_ignore_path('C:\\Projects\\scene.blend')
+    
     def test_direct_file_move_events(self):
         """Test direct file move events (not correlation-based)"""
         # Test rename (same directory)

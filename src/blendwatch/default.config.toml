@@ -30,7 +30,9 @@ ignore_dirs = [
     "Thumbs\\.db",     # Windows thumbnails
     "\\.pytest_cache", # Pytest cache
     "build",           # Build directories
-    "dist"             # Distribution directories
+    "dist",            # Distribution directories
+    ".*\\.blend[0-9]+$",   # Blender backup files (.blend1, .blend2, etc.)
+    ".*\\.blend@$"         # Blender temporary files (.blend@)
 ]
 
 # Output format: 'json' or 'text'

@@ -68,7 +68,7 @@ def load_default_config() -> Config:
         # Return sensible defaults if default config can't be loaded
         return Config(
             extensions=['.blend', '.py', '.txt', '.json', '.toml'],
-            ignore_dirs=[r'\.git', r'__pycache__', r'\.venv'],
+            ignore_dirs=[r'\.git', r'__pycache__', r'\.venv', r'.*\.blend[0-9]+$', r'.*\.blend@$'],
             output_format='json',
             log_level='info',
             buffer_size=100,
