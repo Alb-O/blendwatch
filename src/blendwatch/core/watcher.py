@@ -106,6 +106,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
         # Track recent directory moves to avoid double-reporting file moves
         self.recent_directory_moves: Dict[str, str] = {}  # old_dir -> new_dir
         
+        # Track files that have already been processed as part of directory moves
+        self.directory_processed_files: Dict[str, float] = {}  # file_path -> timestamp
+        
         # Open output file if specified
         self.output_fp = None
         if self.output_file:
@@ -188,7 +191,18 @@ class MoveTrackingHandler(FileSystemEventHandler):
         
         # Determine event type
         if isinstance(event, DirMovedEvent):
-            # Log the directory move itself first
+            # Track this directory move FIRST to avoid double-reporting file moves
+            with self.correlation_lock:
+                self.recent_directory_moves[src_path] = dest_path
+                
+                # Clean up old directory moves (keep only recent ones)
+                if len(self.recent_directory_moves) > 10:
+                    # Remove oldest entries
+                    keys_to_remove = list(self.recent_directory_moves.keys())[:len(self.recent_directory_moves)//2]
+                    for old_dir in keys_to_remove:
+                        del self.recent_directory_moves[old_dir]
+            
+            # Log the directory move itself
             if self.verbose:
                 print(f"[{datetime.now().isoformat()}] DIRECTORY_MOVED: {src_path} -> {dest_path}")
             else:
@@ -196,6 +210,8 @@ class MoveTrackingHandler(FileSystemEventHandler):
             
             # Directory move: find all relevant files and create individual move events
             moved_files = path_utils.find_files_by_extension(Path(dest_path), self.extensions, recursive=True)
+            current_time = time.time()
+            
             for new_file_path in moved_files:
                 try:
                     relative_path = new_file_path.relative_to(dest_path)
@@ -213,23 +229,37 @@ class MoveTrackingHandler(FileSystemEventHandler):
                     'is_directory': False
                 }
                 self.log_event(file_event_data)
-            
-            # Track this directory move to avoid double-reporting later file moves
-            with self.correlation_lock:
-                self.recent_directory_moves[src_path] = dest_path
                 
-                # Clean up old directory moves (keep only recent ones)
-                if len(self.recent_directory_moves) > 10:
-                    # Remove oldest entries
-                    keys_to_remove = list(self.recent_directory_moves.keys())[:len(self.recent_directory_moves)//2]
-                    for old_dir in keys_to_remove:
-                        del self.recent_directory_moves[old_dir]
+                # Track that we've processed these file paths as part of a directory move
+                with self.correlation_lock:
+                    self.directory_processed_files[str(old_file_path)] = current_time
+                    self.directory_processed_files[str(new_file_path)] = current_time
             
             return
         elif isinstance(event, FileMovedEvent):
             # Check if file should be tracked
             if not self.should_track_file(src_path) and not self.should_track_file(dest_path):
                 return
+            
+            # Check if this file move is part of a recent directory move
+            # If so, don't log it separately since it was already logged by the directory move handler
+            with self.correlation_lock:
+                for old_dir, new_dir in self.recent_directory_moves.items():
+                    # Check if this file was moved as part of the directory move
+                    if (src_path.startswith(old_dir) and dest_path.startswith(new_dir)):
+                        # Calculate relative paths to verify it's the same logical move
+                        try:
+                            src_relative = str(Path(src_path))[len(str(Path(old_dir))):].lstrip(os.sep)
+                            dest_relative = str(Path(dest_path))[len(str(Path(new_dir))):].lstrip(os.sep)
+                            
+                            if src_relative == dest_relative:
+                                if self.verbose:
+                                    print(f"[FILE_MOVE] Skipping individual file move - already processed as part of directory move {old_dir} -> {new_dir}")
+                                return
+                        except (ValueError, IndexError):
+                            # If path manipulation fails, continue with normal processing
+                            pass
+            
             event_type = 'file_moved'
         else:
             return
@@ -352,6 +382,14 @@ class MoveTrackingHandler(FileSystemEventHandler):
             for path in expired_creates:
                 del self.pending_creates[path]
             
+            # Clean expired directory processed files  
+            expired_processed = [
+                path for path, timestamp in self.directory_processed_files.items()
+                if current_time - timestamp > self.event_correlation_timeout * 3  # Keep longer than correlation timeout
+            ]
+            for path in expired_processed:
+                del self.directory_processed_files[path]
+            
             # Clean up recent directory moves if we have too many
             if len(self.recent_directory_moves) > 20:
                 # Remove oldest entries (we don't have timestamps, so just remove half)
@@ -364,6 +402,14 @@ class MoveTrackingHandler(FileSystemEventHandler):
         with self.correlation_lock:
             file_name, file_ext, file_size = self._get_file_info(event_data['path'])
             current_time = time.time()
+            
+            # Check if this file has already been processed as part of a directory move
+            if event_data['path'] in self.directory_processed_files:
+                file_processed_time = self.directory_processed_files[event_data['path']]
+                if current_time - file_processed_time < self.event_correlation_timeout * 2:
+                    if self.verbose:
+                        print(f"[CORRELATION] Skipping {event_data['path']} - already processed as part of directory move")
+                    return True  # Indicate we "handled" this event by ignoring it
             
             if is_delete:
                 # Store delete event for later correlation with create events
@@ -381,6 +427,14 @@ class MoveTrackingHandler(FileSystemEventHandler):
                     print(f"[CORRELATION] Current pending deletes: {list(self.pending_deletes.keys())}")
                 
                 for delete_path, delete_data in list(self.pending_deletes.items()):
+                    # Check if the delete path was already processed as part of a directory move
+                    if delete_path in self.directory_processed_files:
+                        delete_processed_time = self.directory_processed_files[delete_path]
+                        if current_time - delete_processed_time < self.event_correlation_timeout * 2:
+                            if self.verbose:
+                                print(f"[CORRELATION] Skipping correlation with {delete_path} - already processed as part of directory move")
+                            continue
+                    
                     delete_name, delete_ext, delete_size = self._get_file_info(delete_path)
                     
                     if self.verbose:
@@ -431,6 +485,32 @@ class MoveTrackingHandler(FileSystemEventHandler):
                                     if self.verbose:
                                         print(f"[CORRELATION] File move is related to directory move {old_dir} -> {new_dir}, skipping separate report")
                                     break
+                                
+                                # Also check if files are being moved as part of a directory restructure
+                                # This handles cases where individual file events are generated during directory moves
+                                try:
+                                    old_dir_path = Path(old_dir)
+                                    new_dir_path = Path(new_dir)
+                                    delete_path_obj = Path(delete_path)
+                                    create_path_obj = Path(event_data['path'])
+                                    
+                                    # Check if the delete was in the old directory and create is in the new directory
+                                    # with the same relative path (using string-based check for compatibility)
+                                    if (str(delete_path_obj).startswith(str(old_dir_path)) and 
+                                        str(create_path_obj).startswith(str(new_dir_path))):
+                                        
+                                        # Calculate relative paths manually to avoid version issues
+                                        delete_relative = str(delete_path_obj)[len(str(old_dir_path)):].lstrip(os.sep)
+                                        create_relative = str(create_path_obj)[len(str(new_dir_path)):].lstrip(os.sep)
+                                        
+                                        if delete_relative == create_relative:
+                                            file_move_is_directory_related = True
+                                            if self.verbose:
+                                                print(f"[CORRELATION] File move with same relative path is related to directory move {old_dir} -> {new_dir}, skipping separate report")
+                                            break
+                                except (ValueError, OSError):
+                                    # Handle any path manipulation errors
+                                    continue
                             
                             if file_move_is_directory_related:
                                 # Remove the matched delete event but don't log a separate file move

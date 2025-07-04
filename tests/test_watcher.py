@@ -305,6 +305,211 @@ class TestMoveTrackingHandler:
         assert create_unmatched['path'] == '/created/file2.py'
         assert create_unmatched['unmatched'] == True
 
+    def test_directory_move_with_blend_files(self):
+        """Test directory move with blend files inside"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            # Mock finding blend files in the moved directory
+            mock_blend_files = [
+                Path('/new/project/scene.blend'),
+                Path('/new/project/assets/character.blend')
+            ]
+            mock_find_files.return_value = mock_blend_files
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
+            
+            # Simulate directory move event
+            dir_event = DirMovedEvent('/old/project', '/new/project')
+            handler.on_moved(dir_event)
+            
+            # Should create file move events for each blend file
+            assert len(handler.move_events) == 2
+            
+            # Check first blend file move (normalize paths for platform compatibility)
+            scene_move = handler.move_events[0]
+            assert scene_move['type'] == 'file_moved'
+            assert Path(scene_move['old_path']) == Path('/old/project/scene.blend')
+            assert Path(scene_move['new_path']) == Path('/new/project/scene.blend')
+            
+            # Check second blend file move
+            character_move = handler.move_events[1]
+            assert character_move['type'] == 'file_moved'
+            assert Path(character_move['old_path']) == Path('/old/project/assets/character.blend')
+            assert Path(character_move['new_path']) == Path('/new/project/assets/character.blend')
+
+    def test_directory_move_deduplication(self):
+        """Test that individual file moves are deduplicated when part of directory move"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            # Mock finding blend files in the moved directory
+            mock_blend_files = [Path('/new/project/scene.blend')]
+            mock_find_files.return_value = mock_blend_files
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
+            
+            # First: directory move event (which creates file move events)
+            dir_event = DirMovedEvent('/old/project', '/new/project')
+            handler.on_moved(dir_event)
+            
+            # Second: individual file move event (should be skipped as duplicate)
+            file_event = FileMovedEvent('/old/project/scene.blend', '/new/project/scene.blend')
+            handler.on_moved(file_event)
+            
+            # Should only have one file move event (from directory move, not from individual file move)
+            assert len(handler.move_events) == 1
+            move_event = handler.move_events[0]
+            assert Path(move_event['old_path']) == Path('/old/project/scene.blend')
+            assert Path(move_event['new_path']) == Path('/new/project/scene.blend')
+
+    def test_complex_nested_directory_move(self):
+        """Test complex directory structure moves with multiple nested blend files"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            # Mock finding multiple blend files in nested directories
+            mock_blend_files = [
+                Path('/new/complex_project/main.blend'),
+                Path('/new/complex_project/scenes/scene1.blend'),
+                Path('/new/complex_project/scenes/scene2.blend'),
+                Path('/new/complex_project/assets/models/character.blend'),
+                Path('/new/complex_project/assets/models/environment.blend')
+            ]
+            mock_find_files.return_value = mock_blend_files
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True)
+            
+            # Simulate directory move event
+            dir_event = DirMovedEvent('/old/complex_project', '/new/complex_project')
+            handler.on_moved(dir_event)
+            
+            # Should create file move events for all blend files
+            assert len(handler.move_events) == 5
+            
+            # Verify each expected move (normalize paths for cross-platform compatibility)
+            expected_moves = [
+                (Path('/old/complex_project/main.blend'), Path('/new/complex_project/main.blend')),
+                (Path('/old/complex_project/scenes/scene1.blend'), Path('/new/complex_project/scenes/scene1.blend')),
+                (Path('/old/complex_project/scenes/scene2.blend'), Path('/new/complex_project/scenes/scene2.blend')),
+                (Path('/old/complex_project/assets/models/character.blend'), Path('/new/complex_project/assets/models/character.blend')),
+                (Path('/old/complex_project/assets/models/environment.blend'), Path('/new/complex_project/assets/models/environment.blend')),
+            ]
+            
+            actual_moves = [(Path(event['old_path']), Path(event['new_path'])) for event in handler.move_events]
+            assert sorted(actual_moves) == sorted(expected_moves)
+
+    def test_directory_processed_files_tracking(self):
+        """Test that files processed as part of directory moves are tracked to prevent duplication"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            mock_blend_files = [Path('/new/project/scene.blend')]
+            mock_find_files.return_value = mock_blend_files
+            
+            handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=2.0)
+            
+            # Process directory move
+            dir_event = DirMovedEvent('/old/project', '/new/project')
+            handler.on_moved(dir_event)
+            
+            # Check that files are tracked in directory_processed_files (normalize paths)
+            old_path_str = str(Path('/old/project/scene.blend'))
+            new_path_str = str(Path('/new/project/scene.blend'))
+            assert old_path_str in handler.directory_processed_files
+            assert new_path_str in handler.directory_processed_files
+
+    def test_correlation_skips_directory_processed_files(self):
+        """Test that correlation logic skips files already processed by directory moves"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            mock_blend_files = [Path('/new/project/scene.blend')]
+            mock_find_files.return_value = mock_blend_files
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
+            
+            # Process directory move first
+            dir_event = DirMovedEvent('/old/project', '/new/project')
+            handler.on_moved(dir_event)
+            
+            # Now simulate individual delete/create events that might come from OS
+            delete_event = FileDeletedEvent('/old/project/scene.blend')
+            create_event = FileCreatedEvent('/new/project/scene.blend')
+            
+            with patch('pathlib.Path.exists', return_value=False):
+                handler.on_deleted(delete_event)
+            
+            with patch('pathlib.Path.exists', return_value=True), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 1024
+                handler.on_created(create_event)
+            
+            # Should still only have one move event (from directory move)
+            # The individual delete/create should be ignored since the file was already processed
+            assert len(handler.move_events) == 1
+
+    def test_user_reported_scenario(self):
+        """Test the exact scenario reported by the user: moving folder with blend file inside"""
+        handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
+        
+        # Step 1: Move "New folder" to "nested" (directory move)
+        dir_event = DirMovedEvent(
+            '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/New folder',
+            '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested'
+        )
+        handler.on_moved(dir_event)  # Should not create any move events (no tracked files in directory)
+        
+        # Step 2: Create subfolder (create event)
+        create_dir_event = DirCreatedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder')
+        handler.on_created(create_dir_event)  # Should be ignored (directory event)
+        
+        # Step 3: Move blend file into subfolder (individual file move via delete/create correlation)
+        delete_event = FileDeletedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/PIVOT_SNB_Track Mouse.blend')
+        create_event = FileCreatedEvent('/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder/PIVOT_SNB_Track Mouse.blend')
+        
+        # Simulate the events
+        with patch('pathlib.Path.exists', return_value=False):
+            handler.on_deleted(delete_event)
+        
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat:
+            mock_stat.return_value.st_size = 112
+            handler.on_created(create_event)
+        
+        # Should have exactly one file move event for the blend file
+        assert len(handler.move_events) == 1
+        
+        move_event = handler.move_events[0]
+        assert move_event['type'] == 'file_moved'
+        assert move_event['old_path'] == '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/PIVOT_SNB_Track Mouse.blend'
+        assert move_event['new_path'] == '/SNB_Instructional Animation/PIVOT_SNB_Track Mouse.blend/nested/subfolder/PIVOT_SNB_Track Mouse.blend'
+        assert move_event['correlated'] == True
+
+    def test_directory_cleanup_limits(self):
+        """Test that directory tracking data structures are cleaned up properly"""
+        handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=0.1)
+        
+        # Add many directory moves to trigger cleanup
+        with handler.correlation_lock:
+            for i in range(25):  # More than the 20 limit
+                handler.recent_directory_moves[f'/old/dir{i}'] = f'/new/dir{i}'
+        
+        # Trigger cleanup by processing another event
+        handler._clean_expired_events()
+        
+        # Should have cleaned up to reasonable size (roughly half, so around 12-13)
+        assert len(handler.recent_directory_moves) <= 13  # Allow some variance in cleanup
+
+    def test_directory_processed_files_cleanup(self):
+        """Test that directory processed files are cleaned up after timeout"""
+        handler = MoveTrackingHandler(['.blend'], [], event_correlation_timeout=0.1)
+        
+        # Add some processed files
+        import time
+        current_time = time.time()
+        with handler.correlation_lock:
+            # Add recent file (should not be cleaned)
+            handler.directory_processed_files['/recent/file.blend'] = current_time
+            # Add old file (should be cleaned)
+            handler.directory_processed_files['/old/file.blend'] = current_time - 1.0
+        
+        # Trigger cleanup
+        handler._clean_expired_events()
+        
+        # Recent file should remain, old file should be cleaned
+        assert '/recent/file.blend' in handler.directory_processed_files
+        assert '/old/file.blend' not in handler.directory_processed_files
 
 class TestFileWatcher:
     """Test the FileWatcher class"""
