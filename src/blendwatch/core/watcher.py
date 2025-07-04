@@ -320,6 +320,68 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if self.verbose:
             print(f"[CREATE EVENT] {path} (directory: {is_directory})")
         
+        # For file creation in a directory context, check if this might be part of a folder move
+        if not is_directory and self.should_track_file(path):
+            # Check if this file creation might be from a folder move by looking for
+            # recently created parent directories
+            parent_path = str(Path(path).parent)
+            
+            # Look for recent directory creation events that might indicate a folder move
+            recent_dir_creation = False
+            current_time = time.time()
+            
+            # Check if the parent directory was recently created (within correlation timeout)
+            # This might indicate a folder move scenario
+            if hasattr(self, '_recent_dir_creates'):
+                for dir_path, create_time in list(self._recent_dir_creates.items()):
+                    if (current_time - create_time <= self.correlation_timeout and
+                        parent_path.startswith(dir_path)):
+                        recent_dir_creation = True
+                        if self.verbose:
+                            print(f"[CREATE EVENT] File {path} appears to be in recently created directory {dir_path}")
+                        break
+            
+            # If this file appears to be part of a directory move, try to find the old location
+            if recent_dir_creation and self.file_index:
+                # Use file index to try to find where this file came from
+                move_detected = self.file_index.record_creation(path)
+                if move_detected:
+                    old_path, new_path = move_detected
+                    if self.verbose:
+                        print(f"[FILE INDEX MOVE] Detected move from directory operation: {old_path} -> {new_path}")
+                    
+                    # Mark both paths as processed to avoid duplicates
+                    current_time = time.time()
+                    self.file_index_processed_files[old_path] = current_time
+                    self.file_index_processed_files[new_path] = current_time
+                    
+                    # Record the move event
+                    move_event = {
+                        'timestamp': datetime.now().isoformat(),
+                        'old_path': old_path,
+                        'new_path': new_path,
+                        'type': 'file_moved',
+                        'detection_method': 'file_index_directory_move'
+                    }
+                    
+                    self.log_event(move_event)
+                    return  # Don't continue with normal correlation logic
+        
+        # Track recent directory creations for folder move detection
+        if is_directory:
+            if not hasattr(self, '_recent_dir_creates'):
+                self._recent_dir_creates = {}
+            self._recent_dir_creates[path] = time.time()
+            
+            # Clean up old directory creation records
+            current_time = time.time()
+            expired_dirs = [
+                dir_path for dir_path, create_time in self._recent_dir_creates.items()
+                if current_time - create_time > self.correlation_timeout * 2
+            ]
+            for dir_path in expired_dirs:
+                del self._recent_dir_creates[dir_path]
+        
         # Check file index for potential move detection
         if (self.file_index and not is_directory and self.should_track_file(path) and
             path not in self.file_index_processed_files):

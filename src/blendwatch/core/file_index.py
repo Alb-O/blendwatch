@@ -284,6 +284,35 @@ class FileIndex:
                 if deleted_name == new_name:
                     return (deleted_path, deleted_file_info)
         
+        # If no explicit deletion found, check if this file disappeared from a previous scan
+        # This handles cases where folder moves don't generate individual file delete events
+        current_name = Path(new_file_info.path).name
+        
+        # Look through all files that were in the previous scan but are no longer present
+        missing_files = []
+        for tracked_path, tracked_info in self.current_files.items():
+            if tracked_path == new_file_info.path:
+                continue  # Skip the file we're checking
+                
+            # Check if this file no longer exists on disk
+            if not Path(tracked_path).exists():
+                tracked_name = Path(tracked_path).name
+                
+                # Check if this missing file matches our new file
+                if (tracked_name == current_name and
+                    tracked_info.size == new_file_info.size and
+                    abs(tracked_info.mtime - new_file_info.mtime) < 5.0):  # Slightly longer tolerance for folder moves
+                    
+                    logger.debug(f"Found missing file match: {tracked_path} -> {new_file_info.path}")
+                    
+                    # Record this as a deletion for future reference
+                    self.recent_deletions[tracked_path] = (tracked_info, time.time())
+                    
+                    # Remove from current files since it's no longer at the old location
+                    del self.current_files[tracked_path]
+                    
+                    return (tracked_path, tracked_info)
+        
         return None
     
     def get_files_in_directory(self, directory: str) -> List[str]:
