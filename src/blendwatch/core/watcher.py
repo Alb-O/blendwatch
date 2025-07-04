@@ -494,17 +494,27 @@ class MoveTrackingHandler(FileSystemEventHandler):
                                     from ..utils import path_utils
                                     current_path = Path(event_data['path'])
                                     
-                                    # Limit search scope to a reasonable area around the current file
-                                    # Go up at most 3 levels to find a search root
-                                    search_root = current_path.parent
-                                    for _ in range(2):  # Go up 2 more levels max
-                                        if search_root.parent != search_root:
-                                            search_root = search_root.parent
-                                        else:
-                                            break
+                                    # For .blend files, use a broader search scope since they are important
+                                    # For other files, use a more limited scope for performance
+                                    if current_path.suffix.lower() == '.blend':
+                                        # For .blend files, go up more levels to find potential sources
+                                        search_root = current_path.parent
+                                        for _ in range(5):  # Go up 5 more levels max for .blend files
+                                            if search_root.parent != search_root:
+                                                search_root = search_root.parent
+                                            else:
+                                                break
+                                    else:
+                                        # For other files, use limited search scope
+                                        search_root = current_path.parent
+                                        for _ in range(2):  # Go up 2 more levels max
+                                            if search_root.parent != search_root:
+                                                search_root = search_root.parent
+                                            else:
+                                                break
                                     
                                     if search_root and search_root.exists():
-                                        # Search for files with the same name in the limited scope
+                                        # Search for files with the same name in the scope
                                         matching_files = list(path_utils.find_files_by_extension(
                                             search_root, [current_path.suffix], recursive=True
                                         ))
