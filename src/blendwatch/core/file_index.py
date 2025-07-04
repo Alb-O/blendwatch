@@ -21,6 +21,7 @@ from typing import Dict, List, Set, Optional, Tuple, NamedTuple
 from dataclasses import dataclass
 from collections import defaultdict
 
+import click
 from ..utils.logging_utils import setup_logger
 
 logger = setup_logger(__name__)
@@ -54,7 +55,7 @@ class FileIndex:
     FileCreatedEvent for files in the destination, but no proper move events.
     """
     
-    def __init__(self, watch_path: str, extensions: List[str], rescan_interval: int = 300):
+    def __init__(self, watch_path: str, extensions: List[str], rescan_interval: int = 300, ignore_patterns: Optional[List[str]] = None):
         """
         Initialize the file index.
         
@@ -62,10 +63,12 @@ class FileIndex:
             watch_path: Root directory to watch
             extensions: List of file extensions to track (e.g., ['.blend', '.py'])
             rescan_interval: How often to rescan the directory tree (seconds)
+            ignore_patterns: List of regex patterns for paths to ignore
         """
         self.watch_path = Path(watch_path)
         self.extensions = set(ext.lower() for ext in extensions)
         self.rescan_interval = rescan_interval
+        self.ignore_patterns = ignore_patterns or []
         
         # Current file index: path -> FileInfo
         self.current_files: Dict[str, FileInfo] = {}
@@ -94,8 +97,8 @@ class FileIndex:
         """Start the file index system"""
         logger.info("Starting file index system...")
         
-        # Initial scan
-        self.rescan()
+        # Initial scan with progress indication
+        self.rescan(show_progress=True)
         
         # Start background rescan thread if interval is positive
         if self.rescan_interval > 0:
@@ -115,16 +118,68 @@ class FileIndex:
         
         logger.info("File index system stopped")
     
-    def rescan(self):
-        """Perform a full rescan of the directory tree"""
+    def rescan(self, show_progress: bool = False):
+        """Perform a full rescan of the directory tree
+        
+        Args:
+            show_progress: If True, show progress information during scanning
+        """
         logger.debug(f"Rescanning directory tree: {self.watch_path}")
         start_time = time.time()
         
         new_files = {}
         file_count = 0
+        dir_count = 0
+        last_progress_update = 0
+        
+        if show_progress:
+            import sys
+            click.echo(f"Scanning {self.watch_path} for files with extensions {list(self.extensions)}...")
         
         try:
             for root, dirs, files in os.walk(self.watch_path):
+                dir_count += 1
+                current_dir = Path(root)
+                
+                # Filter out ignored directories to prevent os.walk from descending into them
+                if self.ignore_patterns:
+                    from ..utils import path_utils
+                    
+                    # Get relative path for pattern matching
+                    try:
+                        relative_path = current_dir.relative_to(self.watch_path)
+                        relative_path_str = str(relative_path).replace('\\', '/')
+                    except ValueError:
+                        # Path is not under watch_path, skip it
+                        dirs.clear()
+                        continue
+                    
+                    # Check if current directory should be ignored (skip root directory check)
+                    if relative_path_str and relative_path_str != '.' and path_utils.is_path_ignored_string(relative_path_str, self.ignore_patterns):
+                        if show_progress:
+                            import sys
+                            skip_text = f"  Skipping ignored directory: {relative_path_str}"
+                            sys.stdout.write(f"\r{' ' * 150}\r{skip_text}")
+                            sys.stdout.flush()
+                        # Skip this entire directory tree by clearing the dirs list
+                        dirs.clear()
+                        continue
+                    
+                    # Filter the dirs list to prevent descending into ignored subdirectories
+                    dirs_to_remove = []
+                    for dir_name in dirs:
+                        if relative_path_str and relative_path_str != '.':
+                            subdir_relative = f"{relative_path_str}/{dir_name}"
+                        else:
+                            subdir_relative = dir_name
+                        
+                        if path_utils.is_path_ignored_string(subdir_relative, self.ignore_patterns):
+                            dirs_to_remove.append(dir_name)
+                    
+                    # Remove ignored directories from the dirs list
+                    for dir_name in dirs_to_remove:
+                        dirs.remove(dir_name)
+                
                 for file in files:
                     file_path = Path(root) / file
                     
@@ -141,6 +196,33 @@ class FileIndex:
                             file_count += 1
                         except (OSError, IOError) as e:
                             logger.warning(f"Could not stat file {file_path}: {e}")
+                
+                # Update progress every 10 directories or every 50 files to avoid spam
+                if show_progress and (dir_count - last_progress_update >= 10 or file_count % 50 == 0):
+                    try:
+                        rel_path = current_dir.relative_to(self.watch_path)
+                        if str(rel_path) != '.':
+                            # Use sys.stdout.write for better control over output
+                            import sys
+                            progress_text = f"  Scanning: {rel_path} ({file_count} files found)"
+                            # Clear entire line completely, then write new progress
+                            sys.stdout.write(f"\r{' ' * 150}\r{progress_text}")
+                            sys.stdout.flush()
+                    except ValueError:
+                        # Path is not relative to watch_path, show abbreviated
+                        import sys
+                        progress_text = f"  Scanning: .../{current_dir.name} ({file_count} files found)"
+                        # Clear entire line completely, then write new progress
+                        sys.stdout.write(f"\r{' ' * 150}\r{progress_text}")
+                        sys.stdout.flush()
+                    last_progress_update = dir_count
+            
+            if show_progress:
+                # Clear the progress line and show completion
+                import sys
+                sys.stdout.write(f"\r{' ' * 150}\r")  # Clear the line completely
+                sys.stdout.flush()
+                click.echo(f"Completed scan: {file_count} files found in {dir_count} directories")
             
             # Update the index atomically
             with self._lock:

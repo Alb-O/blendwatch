@@ -57,7 +57,8 @@ class FileWatcher:
             self.file_index = FileIndex(
                 watch_path=str(watch_path),
                 extensions=extensions,
-                rescan_interval=index_rescan_interval
+                rescan_interval=index_rescan_interval,
+                ignore_patterns=ignore_dirs
             )
         
         # Create observer and event handler

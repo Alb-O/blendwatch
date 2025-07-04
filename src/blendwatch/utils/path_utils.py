@@ -29,6 +29,25 @@ def resolve_path(path: str) -> Path:
     return Path(path).resolve()
 
 
+def is_path_ignored_string(path_str: str, ignore_patterns: List[str]) -> bool:
+    """Check if a path string should be ignored based on regex patterns.
+    
+    This version works with string paths (typically relative paths) for better
+    pattern matching against regex patterns designed for relative paths.
+    
+    Args:
+        path_str: String representation of the path to check
+        ignore_patterns: List of regex patterns to match against
+        
+    Returns:
+        True if the path should be ignored, False otherwise
+    """
+    for pattern in ignore_patterns:
+        if re.search(pattern, path_str):
+            return True
+    return False
+
+
 def is_path_ignored(path: Path, ignore_patterns: List[str]) -> bool:
     """Check if a path should be ignored based on regex patterns."""
     path_str = str(path)

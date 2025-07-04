@@ -23,7 +23,7 @@ test = [
 ]
 
 [project.scripts]
-blendwatch = "blendwatch.cli:main"
+blendwatch = "blendwatch.cli.main:main"
 
 [tool.poetry]
 packages = [{ include = "blendwatch", from = "src" }]
