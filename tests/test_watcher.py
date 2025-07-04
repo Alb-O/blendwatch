@@ -5,6 +5,7 @@ Tests for the watcher module
 import json
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -574,6 +575,50 @@ class TestMoveTrackingHandler:
         assert chain_move2.get('chain_move') == True
         assert chain_move2.get('correlated') == True
 
+    def test_filesystem_based_chain_move_detection(self):
+        """Test chain move detection using filesystem search when no recent events exist"""
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            # Mock filesystem search to find a file with the same name in a different location
+            mock_find_files.return_value = [
+                Path('/project/old_location/scene.blend'),  # Source file
+                Path('/project/new_location/scene.blend')   # Target file (the one being created)
+            ]
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
+            
+            # First, create some recent move activity to satisfy the conditions for filesystem search
+            # This simulates an active editing session where files are being moved around
+            initial_move_event = {
+                'timestamp': datetime.now().isoformat(),
+                'type': 'file_moved',
+                'old_path': '/project/temp/other.blend',
+                'new_path': '/project/somewhere/other.blend',
+                'old_name': 'other.blend',
+                'new_name': 'other.blend',
+                'is_directory': False
+            }
+            handler.move_events.append(initial_move_event)
+            
+            # Simulate a CREATE event with no prior context for this specific file (no recent moves, no pending deletes)
+            create_event = FileCreatedEvent('/project/new_location/scene.blend')
+            
+            with patch('pathlib.Path.exists', return_value=True), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 1024
+                handler.on_created(create_event)
+            
+            # Should have created a chain move event using filesystem search
+            assert len(handler.move_events) == 2  # Initial move + new chain move
+            move_event = handler.move_events[1]  # The new chain move
+            assert move_event['type'] == 'file_moved'
+            assert Path(move_event['old_path']) == Path('/project/old_location/scene.blend')
+            assert Path(move_event['new_path']) == Path('/project/new_location/scene.blend')
+            assert move_event.get('chain_move') == True
+            assert move_event.get('correlated') == True
+            
+            # Verify that filesystem search was called
+            mock_find_files.assert_called_once()
+    
     # ...existing code...
 
 class TestFileWatcher:

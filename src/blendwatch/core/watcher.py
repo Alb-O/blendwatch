@@ -460,6 +460,66 @@ class MoveTrackingHandler(FileSystemEventHandler):
                                 except (ValueError, KeyError):
                                     continue
                         
+                        # If no recent locations found, try searching the filesystem for files with the same name
+                        # This handles cases where files are moved very rapidly or from outside the watched directory
+                        # Only do this if we have good reasons to believe it's a chain move
+                        if (not recent_locations and 
+                            self.should_track_file(event_data['path']) and  # Only for files we're tracking
+                            len(self.move_events) > 0):  # Only if we've seen other move activity recently
+                            
+                            # Additional check: only do filesystem search if we've had recent move activity
+                            # for the same file extension (indicates active editing session)
+                            has_recent_activity = False
+                            current_ext = Path(event_data['path']).suffix.lower()
+                            recent_threshold = current_time - self.event_correlation_timeout * 3
+                            
+                            for move_event in reversed(self.move_events[-5:]):  # Check last 5 events only
+                                try:
+                                    event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
+                                    if (event_time.timestamp() > recent_threshold and
+                                        Path(move_event.get('new_path', '')).suffix.lower() == current_ext):
+                                        has_recent_activity = True
+                                        break
+                                except (ValueError, KeyError):
+                                    continue
+                            
+                            if has_recent_activity:
+                                try:
+                                    from ..utils import path_utils
+                                    current_path = Path(event_data['path'])
+                                    
+                                    # Limit search scope to a reasonable area around the current file
+                                    # Go up at most 3 levels to find a search root
+                                    search_root = current_path.parent
+                                    for _ in range(2):  # Go up 2 more levels max
+                                        if search_root.parent != search_root:
+                                            search_root = search_root.parent
+                                        else:
+                                            break
+                                    
+                                    if search_root and search_root.exists():
+                                        # Search for files with the same name in the limited scope
+                                        matching_files = list(path_utils.find_files_by_extension(
+                                            search_root, [current_path.suffix], recursive=True
+                                        ))
+                                        
+                                        # Filter to files with the same name but different path
+                                        same_name_files = [
+                                            f for f in matching_files 
+                                            if f.name == file_name and str(f) != event_data['path']
+                                        ]
+                                        
+                                        if same_name_files:
+                                            # Use the first matching file as the source
+                                            source_file = same_name_files[0]
+                                            recent_locations.append(str(source_file))
+                                            
+                                            if self.verbose:
+                                                print(f"[CORRELATION] Found potential source file for chain move: {source_file}")
+                                except Exception as e:
+                                    if self.verbose:
+                                        print(f"[CORRELATION] Error searching for chain move source: {e}")
+                        
                         # If we found recent locations for this file, create a move event from the most recent one
                         if recent_locations:
                             most_recent_location = recent_locations[0]  # Take the first (most recent due to iteration order)
