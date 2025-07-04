@@ -24,6 +24,7 @@ from watchdog.events import (
 )
 
 from ..utils import path_utils
+from .file_index import FileIndex
 
 
 class FileWatcher:
@@ -31,7 +32,8 @@ class FileWatcher:
     
     def __init__(self, watch_path: str, extensions: List[str], ignore_dirs: List[str],
                  recursive: bool = True, output_file: Optional[str] = None, 
-                 verbose: bool = False, event_correlation_timeout: float = 2.0):
+                 verbose: bool = False, event_correlation_timeout: float = 2.0,
+                 enable_file_index: bool = True, index_rescan_interval: int = 300):
         """Initialize the file watcher
         
         Args:
@@ -42,6 +44,8 @@ class FileWatcher:
             output_file: Optional output file to log changes
             verbose: Whether to enable verbose output
             event_correlation_timeout: Timeout for correlating move events
+            enable_file_index: Whether to enable the file index system for better move detection
+            index_rescan_interval: How often to rescan the directory tree (seconds)
         """
         self.watch_path = Path(watch_path)
         self.extensions = extensions
@@ -51,6 +55,15 @@ class FileWatcher:
         self.verbose = verbose
         self.event_correlation_timeout = event_correlation_timeout
         
+        # Initialize file index if enabled
+        self.file_index = None
+        if enable_file_index:
+            self.file_index = FileIndex(
+                watch_path=str(watch_path),
+                extensions=extensions,
+                rescan_interval=index_rescan_interval
+            )
+        
         # Create observer and event handler
         self.observer = Observer()
         self.event_handler = MoveTrackingHandler(
@@ -58,11 +71,16 @@ class FileWatcher:
             ignore_patterns=ignore_dirs,
             output_file=output_file,
             verbose=verbose,
-            event_correlation_timeout=event_correlation_timeout
+            event_correlation_timeout=event_correlation_timeout,
+            file_index=self.file_index
         )
     
     def start(self):
         """Start watching for file changes"""
+        # Start file index first if enabled
+        if self.file_index:
+            self.file_index.start()
+        
         self.observer.schedule(
             self.event_handler,
             path=str(self.watch_path),
@@ -74,6 +92,10 @@ class FileWatcher:
         """Stop watching for file changes"""
         self.observer.stop()
         self.observer.join()
+        
+        # Stop file index
+        if self.file_index:
+            self.file_index.stop()
     
     def is_alive(self) -> bool:
         """Check if the watcher is currently running"""
@@ -89,7 +111,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
     
     def __init__(self, extensions: List[str], ignore_patterns: List[str], 
                  output_file: Optional[str] = None, verbose: bool = False,
-                 event_correlation_timeout: float = 2.0):
+                 event_correlation_timeout: float = 2.0, file_index: Optional['FileIndex'] = None):
         super().__init__()
         self.extensions = [ext.lower() for ext in extensions]
         self.ignore_patterns = ignore_patterns
@@ -97,6 +119,7 @@ class MoveTrackingHandler(FileSystemEventHandler):
         self.verbose = verbose
         self.move_events: List[Dict] = []
         self.event_correlation_timeout = event_correlation_timeout
+        self.file_index = file_index
         
         # Event correlation for Windows-style moves (delete + create)
         self.pending_deletes: Dict[str, Dict] = {}  # path -> event_data
@@ -108,6 +131,9 @@ class MoveTrackingHandler(FileSystemEventHandler):
         
         # Track files that have already been processed as part of directory moves
         self.directory_processed_files: Dict[str, float] = {}  # file_path -> timestamp
+        
+        # Track files processed by file index to avoid duplicates
+        self.file_index_processed_files: Dict[str, float] = {}  # file_path -> timestamp
         
         # Open output file if specified
         self.output_fp = None
@@ -292,13 +318,40 @@ class MoveTrackingHandler(FileSystemEventHandler):
         if self.should_ignore_path(path):
             return
         
-        # We are not interested in directory events
         is_directory = isinstance(event, DirDeletedEvent)
+        
+        # On Windows, shutil.move reports directory moves as FileDeletedEvent
+        # Check if this is actually a directory that was moved
+        if not is_directory and not Path(path).exists():
+            # Check if our file index knows about files that were in this path
+            # If it was a directory containing tracked files, treat it as directory deletion
+            if self.file_index:
+                files_in_dir = self.file_index.get_files_in_directory(path)
+                if files_in_dir:
+                    is_directory = True
+                    if self.verbose:
+                        print(f"[DELETE EVENT] Treating as directory deletion (contained {len(files_in_dir)} tracked files): {path}")
+        
+        # For files, check if we should track them
+        # For directories, we want to track them for correlation purposes
         if not is_directory and not self.should_track_file(path):
             return
         
         if self.verbose:
             print(f"[DELETE EVENT] {path} (directory: {is_directory})")
+        
+        # Notify file index about deletion if it's a file we track
+        if self.file_index and not is_directory and self.should_track_file(path):
+            self.file_index.record_deletion(path)
+        
+        # Handle directory deletion - check if it contained tracked files
+        if self.file_index and is_directory:
+            # Get files that were in this directory
+            files_in_dir = self.file_index.get_files_in_directory(path)
+            for file_path in files_in_dir:
+                if self.verbose:
+                    print(f"[DELETE EVENT] Recording deletion of file in deleted directory: {file_path}")
+                self.file_index.record_deletion(file_path)
         
         # Clean expired events first
         self._clean_expired_events()
@@ -329,6 +382,47 @@ class MoveTrackingHandler(FileSystemEventHandler):
         
         if self.verbose:
             print(f"[CREATE EVENT] {path} (directory: {is_directory})")
+        
+        # Check file index for potential move detection
+        move_detected = None
+        if (self.file_index and not is_directory and self.should_track_file(path) and
+            path not in self.file_index_processed_files):
+            
+            move_detected = self.file_index.record_creation(path)
+            
+            if move_detected:
+                old_path, new_path = move_detected
+                if self.verbose:
+                    print(f"[FILE INDEX MOVE] Detected move: {old_path} -> {new_path}")
+                
+                # Mark both paths as processed to avoid duplicates
+                current_time = time.time()
+                self.file_index_processed_files[old_path] = current_time
+                self.file_index_processed_files[new_path] = current_time
+                
+                # Check if we already recorded this move to avoid duplicates
+                already_recorded = False
+                for event in self.move_events:
+                    if (event.get('old_path') == old_path and 
+                        event.get('new_path') == new_path and
+                        event.get('detection_method') == 'file_index'):
+                        already_recorded = True
+                        break
+                
+                if not already_recorded:
+                    # Record the move event
+                    move_event = {
+                        'timestamp': datetime.now().isoformat(),
+                        'old_path': old_path,
+                        'new_path': new_path,
+                        'type': 'file_moved',
+                        'detection_method': 'file_index'
+                    }
+                    
+                    self.log_event(move_event)  # This already adds to move_events
+                
+                # Skip the normal correlation process since we detected the move
+                return
         
         # Clean expired events first
         self._clean_expired_events()
@@ -389,6 +483,14 @@ class MoveTrackingHandler(FileSystemEventHandler):
             ]
             for path in expired_processed:
                 del self.directory_processed_files[path]
+            
+            # Clean expired file index processed files
+            expired_index_processed = [
+                path for path, timestamp in self.file_index_processed_files.items()
+                if current_time - timestamp > self.event_correlation_timeout * 3
+            ]
+            for path in expired_index_processed:
+                del self.file_index_processed_files[path]
             
             # Clean up recent directory moves if we have too many
             if len(self.recent_directory_moves) > 20:
@@ -463,78 +565,110 @@ class MoveTrackingHandler(FileSystemEventHandler):
                         # If no recent locations found, try searching the filesystem for files with the same name
                         # This handles cases where files are moved very rapidly or from outside the watched directory
                         if not recent_locations and self.should_track_file(event_data['path']):
-                            # For blend files, always try filesystem search since they're commonly moved around during editing
-                            # For other files, only search if we have recent move activity
-                            current_ext = Path(event_data['path']).suffix.lower()
-                            should_search_filesystem = False
-                            
-                            if current_ext == '.blend':
-                                # Always search for blend files since they're frequently moved during editing
-                                should_search_filesystem = True
-                            elif len(self.move_events) > 0:
-                                # For other file types, only search if we've had recent move activity
-                                # for the same file extension (indicates active editing session)
-                                has_recent_activity = False
-                                recent_threshold = current_time - self.event_correlation_timeout * 3
+                            # Skip filesystem search if file index is enabled (it handles this better)
+                            if self.file_index:
+                                if self.verbose:
+                                    print(f"[CORRELATION] File index is active, skipping filesystem search for {file_name}")
+                            else:
+                                if self.verbose:
+                                    print(f"[CORRELATION] No recent locations found for {file_name}, checking filesystem search eligibility")
+                                # For blend files, always try filesystem search since they're commonly moved around during editing
+                                # For other files, only search if we have recent move activity
+                                current_ext = Path(event_data['path']).suffix.lower()
+                                should_search_filesystem = False
                                 
-                                for move_event in reversed(self.move_events[-5:]):  # Check last 5 events only
+                                if current_ext == '.blend':
+                                    # Always search for blend files since they're frequently moved during editing
+                                    should_search_filesystem = True
+                                    if self.verbose:
+                                        print(f"[CORRELATION] .blend file detected, enabling filesystem search")
+                                elif len(self.move_events) > 0:
+                                    # For other file types, only search if we've had recent move activity
+                                    # for the same file extension (indicates active editing session)
+                                    has_recent_activity = False
+                                    recent_threshold = current_time - self.event_correlation_timeout * 3
+                                    
+                                    for move_event in reversed(self.move_events[-5:]):  # Check last 5 events only
+                                        try:
+                                            event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
+                                            if (event_time.timestamp() > recent_threshold and
+                                                Path(move_event.get('new_path', '')).suffix.lower() == current_ext):
+                                                has_recent_activity = True
+                                                break
+                                        except (ValueError, KeyError):
+                                            continue
+                                    
+                                    should_search_filesystem = has_recent_activity
+                                
+                                if should_search_filesystem:
+                                    if self.verbose:
+                                        print(f"[CORRELATION] Starting filesystem search for {file_name}")
                                     try:
-                                        event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
-                                        if (event_time.timestamp() > recent_threshold and
-                                            Path(move_event.get('new_path', '')).suffix.lower() == current_ext):
-                                            has_recent_activity = True
-                                            break
-                                    except (ValueError, KeyError):
-                                        continue
-                                
-                                should_search_filesystem = has_recent_activity
-                            
-                            if should_search_filesystem:
-                                try:
-                                    from ..utils import path_utils
-                                    current_path = Path(event_data['path'])
-                                    
-                                    # For .blend files, use a broader search scope since they are important
-                                    # For other files, use a more limited scope for performance
-                                    if current_path.suffix.lower() == '.blend':
-                                        # For .blend files, go up more levels to find potential sources
-                                        search_root = current_path.parent
-                                        for _ in range(5):  # Go up 5 more levels max for .blend files
-                                            if search_root.parent != search_root:
-                                                search_root = search_root.parent
-                                            else:
-                                                break
-                                    else:
-                                        # For other files, use limited search scope
-                                        search_root = current_path.parent
-                                        for _ in range(2):  # Go up 2 more levels max
-                                            if search_root.parent != search_root:
-                                                search_root = search_root.parent
-                                            else:
-                                                break
-                                    
-                                    if search_root and search_root.exists():
-                                        # Search for files with the same name in the scope
-                                        matching_files = list(path_utils.find_files_by_extension(
-                                            search_root, [current_path.suffix], recursive=True
-                                        ))
+                                        from ..utils import path_utils
+                                        current_path = Path(event_data['path'])
                                         
-                                        # Filter to files with the same name but different path
-                                        same_name_files = [
-                                            f for f in matching_files 
-                                            if f.name == file_name and str(f) != event_data['path']
-                                        ]
+                                        # For .blend files, use a broader search scope since they are important
+                                        # For other files, use a more limited scope for performance
+                                        if current_path.suffix.lower() == '.blend':
+                                            # For .blend files, go up more levels to find potential sources
+                                            search_root = current_path.parent
+                                            for _ in range(5):  # Go up 5 more levels max for .blend files
+                                                if search_root.parent != search_root:
+                                                    search_root = search_root.parent
+                                                else:
+                                                    break
+                                        else:
+                                            # For other files, use limited search scope
+                                            search_root = current_path.parent
+                                            for _ in range(2):  # Go up 2 more levels max
+                                                if search_root.parent != search_root:
+                                                    search_root = search_root.parent
+                                                else:
+                                                    break
                                         
-                                        if same_name_files:
-                                            # Use the first matching file as the source
-                                            source_file = same_name_files[0]
-                                            recent_locations.append(str(source_file))
+                                        if search_root and search_root.exists():
+                                            if self.verbose:
+                                                print(f"[CORRELATION] Searching in {search_root} for files with extension {current_path.suffix}")
+                                            # Search for files with the same name in the scope
+                                            matching_files = list(path_utils.find_files_by_extension(
+                                                search_root, [current_path.suffix], recursive=True
+                                            ))
                                             
                                             if self.verbose:
-                                                print(f"[CORRELATION] Found potential source file for chain move: {source_file}")
-                                except Exception as e:
-                                    if self.verbose:
-                                        print(f"[CORRELATION] Error searching for chain move source: {e}")
+                                                print(f"[CORRELATION] Found {len(matching_files)} files with extension {current_path.suffix}")
+                                                if matching_files:
+                                                    print(f"[CORRELATION] Files found: {[str(f) for f in matching_files[:10]]}")  # Show first 10
+                                                
+                                                # Specifically look for files that contain the base name
+                                                base_name = Path(file_name).stem  # "PIVOT_SNB_Track Mouse" without .blend
+                                                similar_files = [
+                                                    f for f in matching_files
+                                                    if base_name.lower() in f.name.lower()
+                                                ]
+                                                if similar_files:
+                                                    print(f"[CORRELATION] Files with similar names containing '{base_name}': {[str(f) for f in similar_files[:5]]}")
+                                            
+                                            # Filter to files with the same name but different path
+                                            same_name_files = [
+                                                f for f in matching_files 
+                                                if f.name == file_name and str(f) != event_data['path']
+                                            ]
+                                            
+                                            if self.verbose:
+                                                print(f"[CORRELATION] Found {len(same_name_files)} files with same name '{file_name}'")
+                                                if same_name_files:
+                                                    print(f"[CORRELATION] Same name files: {[str(f) for f in same_name_files]}")
+                                            
+                                            if same_name_files:
+                                                # Use the first matching file as the source
+                                                source_file = same_name_files[0]
+                                                recent_locations.append(str(source_file))
+                                                
+                                                if self.verbose:
+                                                    print(f"[CORRELATION] Found potential source file for chain move: {source_file}")
+                                    except Exception as e:
+                                        if self.verbose:
+                                            print(f"[CORRELATION] Error searching for chain move source: {e}")
                         
                         # If we found recent locations for this file, create a move event from the most recent one
                         if recent_locations:

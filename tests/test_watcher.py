@@ -623,7 +623,65 @@ class TestMoveTrackingHandler:
             # Verify that filesystem search was called
             mock_find_files.assert_called_once()
     
-    # ...existing code...
+    @patch('blendwatch.utils.path_utils.find_files_by_extension')
+    def test_blend_file_broader_search_scope(self, mock_find_files):
+        """Test that .blend files get broader search scope for filesystem-based move detection"""
+        # Create a complex directory structure scenario
+        # Original file deep in a different branch: C:\root\documents\project1\file.blend
+        # New file deep in target branch: C:\root\projects\game\assets\scenes\nested\file.blend
+        
+        original_file = Path(r'C:\root\documents\project1\test.blend')
+        target_file = Path(r'C:\root\projects\game\assets\scenes\nested\test.blend')
+        
+        # Mock the filesystem search to return the original file when searching from 5 levels up
+        # (which should reach C:\root and find the original file)
+        def mock_find_side_effect(search_path, extensions, recursive=True):
+            search_str = str(search_path)
+            if r'C:\root' in search_str:  # Broad search from 5 levels up
+                return [original_file, target_file]
+            elif r'projects\game' in search_str:  # Limited search (2-3 levels up)
+                return [target_file]  # Only finds the target file
+            else:
+                return []
+        
+        mock_find_files.side_effect = mock_find_side_effect
+        
+        handler = MoveTrackingHandler(['.blend'], [], verbose=True)
+        
+        # Simulate a CREATE event for the .blend file in the deep nested location
+        create_event = {
+            'timestamp': '2024-01-20T10:30:45Z',
+            'path': str(target_file),
+            'type': 'file_created',
+            'is_directory': False
+        }
+        
+        # The correlation should find the original file due to broader search for .blend files
+        result = handler._try_correlate_events(create_event, is_delete=False)
+        
+        # Should successfully correlate as a move
+        assert result == True
+        assert len(handler.move_events) == 1
+        
+        move_event = handler.move_events[0]
+        assert move_event['type'] == 'file_moved'
+        assert move_event['old_path'] == str(original_file)
+        assert move_event['new_path'] == str(target_file)
+        assert move_event.get('chain_move') == True
+        
+        # Verify that find_files_by_extension was called with broader search scope
+        # Should be called at least once with a path that can reach both files
+        calls = mock_find_files.call_args_list
+        
+        # Look for a call that would find both files (broader search)
+        found_broad_search = False
+        for call in calls:
+            search_path = str(call[0][0])  # First positional argument
+            if r'C:\root' in search_path:  # This is the broad search that finds both files
+                found_broad_search = True
+                break
+        
+        assert found_broad_search, f"Expected broad search call not found. Calls: {calls}"
 
 class TestFileWatcher:
     """Test the FileWatcher class"""
@@ -742,3 +800,302 @@ class TestFileWatcher:
         
         assert watcher.is_alive() == True
         mock_observer.is_alive.assert_called_once()
+
+class TestFileIndexIntegration:
+    """Test the file index integration with FileWatcher"""
+    
+    def test_file_index_initialization(self, tmp_path):
+        """Test that file index is properly initialized"""
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=True,
+            index_rescan_interval=0  # Disable periodic rescanning for test
+        )
+        
+        assert watcher.file_index is not None
+        assert watcher.file_index.watch_path == tmp_path
+        assert watcher.file_index.extensions == {'.blend'}
+        assert watcher.file_index.rescan_interval == 0
+    
+    def test_file_index_disabled(self, tmp_path):
+        """Test that file index can be disabled"""
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=False
+        )
+        
+        assert watcher.file_index is None
+    
+    def test_simple_directory_move_detection(self, tmp_path):
+        """Test that directory moves with tracked files are detected"""
+        # Create directory structure
+        source_dir = tmp_path / "source"
+        target_dir = tmp_path / "target"
+        source_dir.mkdir()
+        target_dir.mkdir()
+        
+        # Create a test .blend file
+        test_file = source_dir / "test.blend"
+        test_file.write_text("dummy blend content")
+        
+        # Start watcher with file index
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            verbose=False,
+            enable_file_index=True,
+            index_rescan_interval=0  # Disable periodic rescanning
+        )
+        
+        watcher.start()
+        time.sleep(0.5)  # Allow initialization
+        
+        # Verify file index is active and file is indexed
+        assert watcher.file_index is not None
+        assert watcher.file_index.get_file_count() == 1
+        assert watcher.file_index.is_file_tracked(str(test_file))
+        
+        # Perform the move
+        import shutil
+        destination = target_dir / "source"
+        shutil.move(str(source_dir), str(destination))
+        
+        # Wait for events to be processed
+        time.sleep(1)
+        
+        watcher.stop()
+        
+        # Check that move was detected
+        events = watcher.get_events()
+        file_moves = [e for e in events if e.get('type') == 'file_moved']
+        
+        assert len(file_moves) >= 1
+        
+        # Find the specific move we're looking for
+        expected_old = str(test_file)
+        expected_new = str(destination / "test.blend")
+        
+        move_found = False
+        for event in file_moves:
+            if (event.get('old_path') == expected_old and 
+                event.get('new_path') == expected_new and
+                event.get('detection_method') == 'file_index'):
+                move_found = True
+                break
+        
+        assert move_found, f"Expected move not found: {expected_old} -> {expected_new}"
+    
+    def test_nested_directory_move_detection(self, tmp_path):
+        """Test that nested directory moves with multiple tracked files are detected"""
+        # Create complex directory structure
+        source_dir = tmp_path / "source"
+        target_dir = tmp_path / "target"
+        source_dir.mkdir()
+        target_dir.mkdir()
+        
+        # Create nested structure with multiple .blend files
+        subdir = source_dir / "subdir"
+        subdir.mkdir()
+        
+        test_file1 = source_dir / "main.blend"
+        test_file1.write_text("main blend content")
+        
+        test_file2 = subdir / "nested.blend"
+        test_file2.write_text("nested blend content")
+        
+        # Start watcher with file index
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            verbose=False,
+            enable_file_index=True,
+            index_rescan_interval=0
+        )
+        
+        watcher.start()
+        time.sleep(0.5)
+        
+        # Verify file index is active and files are indexed
+        assert watcher.file_index is not None
+        assert watcher.file_index.get_file_count() == 2
+        assert watcher.file_index.is_file_tracked(str(test_file1))
+        assert watcher.file_index.is_file_tracked(str(test_file2))
+        
+        # Perform the move
+        import shutil
+        destination = target_dir / "source"
+        shutil.move(str(source_dir), str(destination))
+        
+        # Wait for events to be processed
+        time.sleep(1)
+        
+        watcher.stop()
+        
+        # Check that both moves were detected
+        events = watcher.get_events()
+        file_moves = [e for e in events if e.get('type') == 'file_moved' and e.get('detection_method') == 'file_index']
+        
+        # Should detect moves for both files
+        expected_moves = [
+            (str(test_file1), str(destination / "main.blend")),
+            (str(test_file2), str(destination / "subdir" / "nested.blend"))
+        ]
+        
+        found_moves = [(e.get('old_path'), e.get('new_path')) for e in file_moves]
+        
+        for expected_old, expected_new in expected_moves:
+            assert (expected_old, expected_new) in found_moves, \
+                f"Expected move not found: {expected_old} -> {expected_new}. Found: {found_moves}"
+    
+    def test_file_index_ignores_non_tracked_extensions(self, tmp_path):
+        """Test that file index only tracks specified extensions"""
+        # Create files with different extensions
+        test_blend = tmp_path / "test.blend"
+        test_txt = tmp_path / "test.txt"
+        test_blend.write_text("blend content")
+        test_txt.write_text("txt content")
+        
+        # Start watcher tracking only .blend files
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=True,
+            index_rescan_interval=0
+        )
+        
+        watcher.start()
+        time.sleep(0.5)
+        watcher.stop()
+        
+        # Verify file index is active and only tracks specified extensions
+        assert watcher.file_index is not None
+        assert watcher.file_index.get_file_count() == 1
+        assert watcher.file_index.is_file_tracked(str(test_blend))
+        assert not watcher.file_index.is_file_tracked(str(test_txt))
+    
+    def test_file_index_correlation_window(self, tmp_path):
+        """Test that file index correlation works within time window"""
+        source_file = tmp_path / "test.blend"
+        source_file.write_text("content")
+        
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=True,
+            index_rescan_interval=0
+        )
+        
+        watcher.start()
+        time.sleep(0.5)
+        
+        # Manually test the file index correlation
+        file_index = watcher.file_index
+        assert file_index is not None
+        
+        # Record a deletion
+        file_index.record_deletion(str(source_file))
+        
+        # Create a new file with same name in different location
+        target_file = tmp_path / "subdir" / "test.blend"
+        target_file.parent.mkdir()
+        target_file.write_text("content")
+        
+        # Record creation and check for move detection
+        move_result = file_index.record_creation(str(target_file))
+        
+        watcher.stop()
+        
+        # Should detect the move
+        assert move_result is not None
+        old_path, new_path = move_result
+        assert old_path == str(source_file)
+        assert new_path == str(target_file)
+    
+    def test_file_index_no_false_positives(self, tmp_path):
+        """Test that file index doesn't create false positive moves"""
+        # Create a new file without any prior deletion
+        test_file = tmp_path / "new.blend"
+        test_file.write_text("content")
+        
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=True,
+            index_rescan_interval=0
+        )
+        
+        watcher.start()
+        time.sleep(0.5)
+        
+        # Manually test creation without prior deletion
+        file_index = watcher.file_index
+        assert file_index is not None
+        move_result = file_index.record_creation(str(test_file))
+        
+        watcher.stop()
+        
+        # Should not detect any move (no prior deletion)
+        assert move_result is None
+    
+    @patch('time.time')
+    def test_file_index_cleanup_old_events(self, mock_time, tmp_path):
+        """Test that file index cleans up old events properly"""
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=True,
+            index_rescan_interval=0
+        )
+        
+        file_index = watcher.file_index
+        assert file_index is not None
+        
+        # Mock time progression
+        mock_time.return_value = 1000.0
+        
+        # Record some deletions and creations
+        file_index.record_deletion("/old/path1.blend")
+        file_index.record_deletion("/old/path2.blend")
+        
+        # Move time forward beyond correlation window
+        mock_time.return_value = 1020.0  # 20 seconds later (beyond 10s window)
+        
+        # Trigger cleanup
+        file_index._cleanup_old_events()
+        
+        # Old events should be cleaned up
+        assert len(file_index.recent_deletions) == 0
+        assert len(file_index.recent_creations) == 0
+    
+    def test_watcher_without_file_index_fallback(self, tmp_path):
+        """Test that watcher still works when file index is disabled"""
+        # Create a simple file
+        test_file = tmp_path / "test.blend"
+        test_file.write_text("content")
+        
+        watcher = FileWatcher(
+            watch_path=str(tmp_path),
+            extensions=['.blend'],
+            ignore_dirs=[],
+            enable_file_index=False  # Disable file index
+        )
+        
+        assert watcher.file_index is None
+        
+        watcher.start()
+        time.sleep(0.5)
+        watcher.stop()
+        
+        # Should work without errors even without file index
+        events = watcher.get_events()
+        assert isinstance(events, list)
