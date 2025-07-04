@@ -19,7 +19,19 @@ from blendwatch.blender.cache import BlendFileCache
 from blendwatch.core.config import Config, load_default_config
 from blendwatch.utils.path_utils import resolve_path, is_path_ignored, find_files_by_extension
 
+# Enhanced asset tracking with blender-asset-tracer
+from blender_asset_tracer import trace
+from blender_asset_tracer.trace import result, progress
+
 log = logging.getLogger(__name__)
+
+class DependencyInfo(NamedTuple):
+    """Information about a dependency found by blender-asset-tracer."""
+    asset_path: Path
+    block_name: str
+    is_sequence: bool
+    usage_type: str
+
 
 class BacklinkResult(NamedTuple):
     """Result of a backlink search."""
@@ -403,6 +415,144 @@ class BacklinkScanner:
                 f"(cache hit rate: {hit_rate}%, pre-filtering: {use_prefiltering})")
         
         return backlinks
+
+    def find_all_dependencies(self, blend_file: Union[str, Path], 
+                             progress_callback: Optional[progress.Callback] = None) -> List[DependencyInfo]:
+        """Find all dependencies of a blend file using blender-asset-tracer.
+        
+        This method provides comprehensive dependency analysis including:
+        - Library files (.blend)
+        - Image sequences and UDIMs
+        - Individual texture files
+        - Sound files
+        - Other asset types
+        
+        Args:
+            blend_file: Path to the blend file to analyze
+            progress_callback: Optional progress callback for long operations
+            
+        Returns:
+            List of DependencyInfo objects describing all dependencies
+        """
+        blend_file = resolve_path(str(blend_file))
+        if not blend_file.exists():
+            raise FileNotFoundError(f"Blend file not found: {blend_file}")
+        
+        dependencies = []
+        
+        try:
+            log.info(f"Analyzing dependencies for {blend_file.name}")
+            
+            # Use blender-asset-tracer to find all dependencies
+            for block_usage in trace.deps(blend_file, progress_callback):
+                # Convert BlockUsage to our DependencyInfo format
+                # Handle BlendPath to Path conversion
+                asset_path = Path(str(block_usage.asset_path))
+                
+                # Determine usage type based on block information
+                usage_type = "unknown"
+                if hasattr(block_usage, 'block') and block_usage.block:
+                    if hasattr(block_usage.block, 'code'):
+                        block_code = block_usage.block.code
+                        if block_code == b'LI':
+                            usage_type = "library"
+                        elif block_code == b'IM':
+                            usage_type = "image"
+                        elif block_code == b'SO':
+                            usage_type = "sound"
+                        else:
+                            usage_type = block_code.decode('ascii', errors='ignore')
+                
+                # Handle block_name conversion from bytes to string
+                block_name = "unknown"
+                if block_usage.block_name:
+                    if isinstance(block_usage.block_name, bytes):
+                        block_name = block_usage.block_name.decode('utf-8', errors='ignore')
+                    else:
+                        block_name = str(block_usage.block_name)
+                
+                dep_info = DependencyInfo(
+                    asset_path=asset_path,
+                    block_name=block_name,
+                    is_sequence=block_usage.is_sequence,
+                    usage_type=usage_type
+                )
+                dependencies.append(dep_info)
+            
+            log.info(f"Found {len(dependencies)} dependencies in {blend_file.name}")
+            
+        except Exception as e:
+            log.error(f"Error analyzing dependencies for {blend_file}: {e}")
+            raise
+        
+        return dependencies
+
+    def get_dependency_summary(self, blend_file: Union[str, Path]) -> Dict[str, int]:
+        """Get a summary of dependency types for a blend file.
+        
+        Args:
+            blend_file: Path to the blend file to analyze
+            
+        Returns:
+            Dictionary with counts of each dependency type
+        """
+        dependencies = self.find_all_dependencies(blend_file)
+        
+        summary = {}
+        for dep in dependencies:
+            dep_type = dep.usage_type
+            if dep.is_sequence:
+                dep_type += "_sequence"
+            summary[dep_type] = summary.get(dep_type, 0) + 1
+        
+        return summary
+
+    def find_missing_dependencies(self, blend_file: Union[str, Path]) -> List[DependencyInfo]:
+        """Find dependencies that are missing from the filesystem.
+        
+        Args:
+            blend_file: Path to the blend file to analyze
+            
+        Returns:
+            List of DependencyInfo objects for missing dependencies
+        """
+        dependencies = self.find_all_dependencies(blend_file)
+        missing = []
+        
+        for dep in dependencies:
+            if not dep.asset_path.exists():
+                # For sequences, check if any file in the sequence exists
+                if dep.is_sequence:
+                    # For now, just mark as missing if the exact path doesn't exist
+                    # TODO: Implement proper sequence checking
+                    missing.append(dep)
+                else:
+                    missing.append(dep)
+        
+        return missing
+
+    def get_blend_file_dependencies_by_type(self, blend_file: Union[str, Path]) -> Dict[str, List[DependencyInfo]]:
+        """Get dependencies grouped by type.
+        
+        Args:
+            blend_file: Path to the blend file to analyze
+            
+        Returns:
+            Dictionary mapping dependency types to lists of dependencies
+        """
+        dependencies = self.find_all_dependencies(blend_file)
+        by_type = {}
+        
+        for dep in dependencies:
+            dep_type = dep.usage_type
+            if dep.is_sequence:
+                dep_type += "_sequence"
+            
+            if dep_type not in by_type:
+                by_type[dep_type] = []
+            by_type[dep_type].append(dep)
+        
+        return by_type
     
 
 

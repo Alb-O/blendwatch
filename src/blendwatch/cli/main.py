@@ -14,6 +14,7 @@ from blendwatch.cli.commands.update_links import update_links_command, update_al
 from blendwatch.cli.commands.backlinks import backlinks_command, links_alias
 from blendwatch.cli.commands.sync import sync_command, auto_alias
 from blendwatch.cli.commands.status import status_command
+from blendwatch.cli.commands.deps import deps
 
 # Initialize colorama for cross-platform colored output
 init()
@@ -38,6 +39,9 @@ def main():
       
       # Find which files link to an asset
       blendwatch links my_asset.blend
+      
+      # Analyze dependencies of a blend file
+      blendwatch deps my_file.blend
     
     Use 'blendwatch COMMAND --help' for detailed help on any command.
     """
@@ -52,6 +56,7 @@ main.add_command(update_links_command, name='update-links')
 main.add_command(backlinks_command, name='backlinks')
 main.add_command(sync_command, name='sync')
 main.add_command(status_command, name='status')
+main.add_command(deps, name='deps')
 
 # Register aliases
 main.add_command(watch_alias, name='w')
