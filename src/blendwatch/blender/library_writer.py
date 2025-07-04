@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional, Union
 from blender_asset_tracer import blendfile
+from blender_asset_tracer.bpathlib import BlendPath
 from blendwatch.utils.path_utils import resolve_path, get_relative_path, bytes_to_string
 from .block_level_optimizations import get_libraries_ultra_fast, SelectiveBlockReader
 
@@ -366,55 +367,14 @@ class LibraryPathWriter:
     def _convert_to_relative_path(self, absolute_path: str) -> str:
         """Convert an absolute path to Blender relative format if possible."""
         try:
-            new_path_obj = resolve_path(absolute_path)
-            blend_dir = self.blend_file_path.parent
+            asset_path = Path(absolute_path).resolve()
+            bfile_path = self.blend_file_path.resolve()
             
-            # Try direct relative path first
-            relative_path = get_relative_path(new_path_obj, blend_dir)
-            if relative_path is not None:
-                return '//' + str(relative_path).replace('\\', '/')
-            
-            # If direct relative path doesn't work, try to find a common ancestor
-            # and create a relative path using .. navigation
-            try:
-                # Find the common path between the blend file directory and target file
-                # by iterating through parent directories
-                blend_parts = blend_dir.parts
-                target_parts = new_path_obj.parts
-                
-                # Find the longest common prefix
-                common_length = 0
-                for i, (blend_part, target_part) in enumerate(zip(blend_parts, target_parts)):
-                    if blend_part.lower() == target_part.lower():  # Case-insensitive comparison for Windows
-                        common_length = i + 1
-                    else:
-                        break
-                
-                if common_length > 0:
-                    # Calculate how many directories to go up from blend_dir to reach common ancestor
-                    up_levels = len(blend_parts) - common_length
-                    
-                    # Get the path from common ancestor to target
-                    down_path_parts = target_parts[common_length:]
-                    
-                    # Build the relative path
-                    if up_levels == 0:
-                        # Same directory level
-                        relative_parts = down_path_parts
-                    else:
-                        # Need to go up first
-                        relative_parts = ['..'] * up_levels + list(down_path_parts)
-                    
-                    relative_path_str = '/'.join(relative_parts)
-                    return '//' + relative_path_str
-                
-            except (ValueError, IndexError):
-                pass
-            
-            # If we can't create a relative path, return absolute
-            return str(new_path_obj)
-            
-        except (ValueError, OSError):
+            # Use BlendPath.mkrelative for robust relative path conversion
+            relative_blend_path = BlendPath.mkrelative(asset_path, bfile_path)
+            return relative_blend_path.decode('utf-8')
+        except Exception:
+            # If conversion fails for any reason, return absolute path
             return absolute_path
     
     def _debug_path_matching(self, current_paths: Dict[str, str], path_mapping: Dict[str, str]) -> None:
