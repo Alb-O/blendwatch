@@ -10,7 +10,7 @@ from typing import Optional
 
 import click
 
-from blender_asset_tracer.cli.common import humanize_bytes
+from blender_asset_tracer.cli.common import humanize_bytes, shorten
 
 from blendwatch.blender.backlinks import BacklinkScanner, DependencyInfo
 from blendwatch.core.config import load_default_config
@@ -18,18 +18,6 @@ from blendwatch.cli.utils import load_config_with_fallback
 from blendwatch.utils.path_utils import resolve_path
 
 log = logging.getLogger(__name__)
-
-
-def shorten_path(base_path: Path, target_path: Path) -> str:
-    """Shorten a path relative to a base path for display."""
-    try:
-        return str(target_path.relative_to(base_path))
-    except ValueError:
-        # If not relative, show abbreviated absolute path
-        path_str = str(target_path)
-        if len(path_str) > 60:
-            return f"...{path_str[-57:]}"
-        return path_str
 
 
 @click.command()
@@ -78,7 +66,7 @@ def deps(blend_file: Path, search_dir: Optional[Path], show_missing: bool,
         
         # Show summary only
         if summary:
-            click.echo(f"Analyzing dependencies for {shorten_path(Path.cwd(), blend_file)}...")
+            click.echo(f"Analyzing dependencies for {shorten(Path.cwd(), blend_file)}...")
             dep_summary = scanner.get_dependency_summary(blend_file)
             
             click.echo(f"\nDependency Summary for {blend_file.name}:")
@@ -164,7 +152,7 @@ def _display_dependency(dep: DependencyInfo, verbose: bool):
     seq_indicator = " [SEQ]" if dep.is_sequence else ""
     
     # Basic display
-    path_display = shorten_path(Path.cwd(), dep.asset_path)
+    path_display = shorten(Path.cwd(), dep.asset_path)
     click.echo(f"  {status} {path_display}{seq_indicator}")
     
     # Verbose details
@@ -174,18 +162,8 @@ def _display_dependency(dep: DependencyInfo, verbose: bool):
         if dep.asset_path.exists():
             try:
                 size = dep.asset_path.stat().st_size
-                size_str = _humanize_bytes(size)
+                size_str = humanize_bytes(size)
                 click.echo(f"      Size: {size_str}")
             except (OSError, IOError):
                 pass
         click.echo()
-
-
-def _humanize_bytes(size: int) -> str:
-    """Convert bytes to human readable format."""
-    size_float = float(size)
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size_float < 1024.0:
-            return f"{size_float:.1f} {unit}"
-        size_float /= 1024.0
-    return f"{size_float:.1f} PB"
