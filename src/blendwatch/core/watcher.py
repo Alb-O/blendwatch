@@ -462,28 +462,34 @@ class MoveTrackingHandler(FileSystemEventHandler):
                         
                         # If no recent locations found, try searching the filesystem for files with the same name
                         # This handles cases where files are moved very rapidly or from outside the watched directory
-                        # Only do this if we have good reasons to believe it's a chain move
-                        if (not recent_locations and 
-                            self.should_track_file(event_data['path']) and  # Only for files we're tracking
-                            len(self.move_events) > 0):  # Only if we've seen other move activity recently
-                            
-                            # Additional check: only do filesystem search if we've had recent move activity
-                            # for the same file extension (indicates active editing session)
-                            has_recent_activity = False
+                        if not recent_locations and self.should_track_file(event_data['path']):
+                            # For blend files, always try filesystem search since they're commonly moved around during editing
+                            # For other files, only search if we have recent move activity
                             current_ext = Path(event_data['path']).suffix.lower()
-                            recent_threshold = current_time - self.event_correlation_timeout * 3
+                            should_search_filesystem = False
                             
-                            for move_event in reversed(self.move_events[-5:]):  # Check last 5 events only
-                                try:
-                                    event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
-                                    if (event_time.timestamp() > recent_threshold and
-                                        Path(move_event.get('new_path', '')).suffix.lower() == current_ext):
-                                        has_recent_activity = True
-                                        break
-                                except (ValueError, KeyError):
-                                    continue
+                            if current_ext == '.blend':
+                                # Always search for blend files since they're frequently moved during editing
+                                should_search_filesystem = True
+                            elif len(self.move_events) > 0:
+                                # For other file types, only search if we've had recent move activity
+                                # for the same file extension (indicates active editing session)
+                                has_recent_activity = False
+                                recent_threshold = current_time - self.event_correlation_timeout * 3
+                                
+                                for move_event in reversed(self.move_events[-5:]):  # Check last 5 events only
+                                    try:
+                                        event_time = datetime.fromisoformat(move_event['timestamp'].replace('Z', '+00:00'))
+                                        if (event_time.timestamp() > recent_threshold and
+                                            Path(move_event.get('new_path', '')).suffix.lower() == current_ext):
+                                            has_recent_activity = True
+                                            break
+                                    except (ValueError, KeyError):
+                                        continue
+                                
+                                should_search_filesystem = has_recent_activity
                             
-                            if has_recent_activity:
+                            if should_search_filesystem:
                                 try:
                                     from ..utils import path_utils
                                     current_path = Path(event_data['path'])

@@ -514,66 +514,70 @@ class TestMoveTrackingHandler:
 
     def test_move_chain_detection(self):
         """Test that chain moves are detected when only CREATE events are seen"""
-        handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
-        
-        # Simulate the first normal move (DELETE + CREATE correlation)
-        delete_event1 = FileDeletedEvent('/project/scene.blend')
-        create_event1 = FileCreatedEvent('/project/subdir1/scene.blend')
-        
-        with patch('pathlib.Path.exists', return_value=False), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 100
-            handler.on_deleted(delete_event1)
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 100
-            handler.on_created(create_event1)
-        
-        # Should have one normal move
-        assert len(handler.move_events) == 1
-        assert handler.move_events[0]['type'] == 'file_moved'
-        assert handler.move_events[0]['old_path'] == '/project/scene.blend'
-        assert handler.move_events[0]['new_path'] == '/project/subdir1/scene.blend'
-        assert handler.move_events[0].get('correlated') == True
-        assert not handler.move_events[0].get('chain_move')
-        
-        # Now simulate rapid moves where only CREATE events are seen
-        # This simulates the user's scenario where filesystem events come too fast
-        
-        # Second move: only CREATE event (no DELETE because move was too fast)
-        create_event2 = FileCreatedEvent('/project/subdir2/scene.blend')
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 100
-            handler.on_created(create_event2)
-        
-        # Should now have two moves, second one is a chain move
-        assert len(handler.move_events) == 2
-        chain_move1 = handler.move_events[1]
-        assert chain_move1['type'] == 'file_moved'
-        assert chain_move1['old_path'] == '/project/subdir1/scene.blend'
-        assert chain_move1['new_path'] == '/project/subdir2/scene.blend'
-        assert chain_move1.get('chain_move') == True
-        assert chain_move1.get('correlated') == True
-        
-        # Third move: another CREATE-only event
-        create_event3 = FileCreatedEvent('/project/subdir3/scene.blend')
-        
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat:
-            mock_stat.return_value.st_size = 100
-            handler.on_created(create_event3)
-        
-        # Should now have three moves, third one is also a chain move
-        assert len(handler.move_events) == 3
-        chain_move2 = handler.move_events[2]
-        assert chain_move2['type'] == 'file_moved'
-        assert chain_move2['old_path'] == '/project/subdir2/scene.blend'
-        assert chain_move2['new_path'] == '/project/subdir3/scene.blend'
-        assert chain_move2.get('chain_move') == True
-        assert chain_move2.get('correlated') == True
+        with patch('blendwatch.utils.path_utils.find_files_by_extension') as mock_find_files:
+            # Mock filesystem search to return no files initially
+            mock_find_files.return_value = []
+            
+            handler = MoveTrackingHandler(['.blend'], [], verbose=True, event_correlation_timeout=2.0)
+            
+            # Simulate the first normal move (DELETE + CREATE correlation)
+            delete_event1 = FileDeletedEvent('/project/scene.blend')
+            create_event1 = FileCreatedEvent('/project/subdir1/scene.blend')
+            
+            with patch('pathlib.Path.exists', return_value=False), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 100
+                handler.on_deleted(delete_event1)
+            
+            with patch('pathlib.Path.exists', return_value=True), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 100
+                handler.on_created(create_event1)
+            
+            # Should have one normal move
+            assert len(handler.move_events) == 1
+            assert handler.move_events[0]['type'] == 'file_moved'
+            assert handler.move_events[0]['old_path'] == '/project/scene.blend'
+            assert handler.move_events[0]['new_path'] == '/project/subdir1/scene.blend'
+            assert handler.move_events[0].get('correlated') == True
+            assert not handler.move_events[0].get('chain_move')
+            
+            # Now simulate rapid moves where only CREATE events are seen
+            # This simulates the user's scenario where filesystem events come too fast
+            
+            # Second move: only CREATE event (no DELETE because move was too fast)
+            create_event2 = FileCreatedEvent('/project/subdir2/scene.blend')
+            
+            with patch('pathlib.Path.exists', return_value=True), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 100
+                handler.on_created(create_event2)
+            
+            # Should now have two moves, second one is a chain move
+            assert len(handler.move_events) == 2
+            chain_move1 = handler.move_events[1]
+            assert chain_move1['type'] == 'file_moved'
+            assert chain_move1['old_path'] == '/project/subdir1/scene.blend'
+            assert chain_move1['new_path'] == '/project/subdir2/scene.blend'
+            assert chain_move1.get('chain_move') == True
+            assert chain_move1.get('correlated') == True
+            
+            # Third move: another CREATE-only event
+            create_event3 = FileCreatedEvent('/project/subdir3/scene.blend')
+            
+            with patch('pathlib.Path.exists', return_value=True), \
+                 patch('pathlib.Path.stat') as mock_stat:
+                mock_stat.return_value.st_size = 100
+                handler.on_created(create_event3)
+            
+            # Should now have three moves, third one is also a chain move
+            assert len(handler.move_events) == 3
+            chain_move2 = handler.move_events[2]
+            assert chain_move2['type'] == 'file_moved'
+            assert chain_move2['old_path'] == '/project/subdir2/scene.blend'
+            assert chain_move2['new_path'] == '/project/subdir3/scene.blend'
+            assert chain_move2.get('chain_move') == True
+            assert chain_move2.get('correlated') == True
 
     def test_filesystem_based_chain_move_detection(self):
         """Test chain move detection using filesystem search when no recent events exist"""
